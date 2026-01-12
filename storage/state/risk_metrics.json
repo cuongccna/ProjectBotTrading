@@ -1,0 +1,12 @@
+{
+  "current_drawdown": "0.50",
+  "max_drawdown_today": "1.20",
+  "daily_pnl": "70.00",
+  "realized_pnl": "0.00",
+  "unrealized_pnl": "70.00",
+  "risk_budget_used_pct": "15.00",
+  "risk_budget_remaining": "4250.00",
+  "max_position_size": "10000.00",
+  "max_leverage": 10,
+  "current_leverage": 2.5
+}

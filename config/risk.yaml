@@ -1,0 +1,137 @@
+# ============================================================
+# Risk Configuration
+# ============================================================
+#
+# This file defines all risk management parameters.
+# Risk configuration is hierarchical:
+#   1. System-level (can halt everything)
+#   2. Strategy-level (can pause trading)
+#   3. Trade-level (can veto individual trades)
+#
+# CRITICAL: Changes to this file are audit-logged.
+#
+# ============================================================
+
+# ------------------------------------------------------------
+# System-Level Risk (Global Circuit Breakers)
+# ------------------------------------------------------------
+system_risk:
+  # Conditions that permanently stop the bot
+  permanent_stop_conditions:
+    - name: "database_connection_lost"
+      description: "Database connection cannot be restored"
+      
+    - name: "exchange_auth_failure"
+      description: "Exchange authentication fails repeatedly"
+      
+    - name: "critical_balance_discrepancy"
+      description: "Reported balance differs from expected by > threshold"
+      threshold_percent: 5.0
+      
+  # Conditions that temporarily halt trading
+  halt_conditions:
+    max_daily_loss_percent: 5.0
+    max_drawdown_percent: 10.0
+    max_consecutive_losses: 5
+    
+  # System health thresholds
+  health_thresholds:
+    max_data_staleness_seconds: 300
+    min_data_sources_available: 2
+    max_api_error_rate_percent: 10.0
+
+# ------------------------------------------------------------
+# Strategy-Level Risk
+# ------------------------------------------------------------
+strategy_risk:
+  # Per-strategy limits
+  max_positions_per_strategy: 3
+  max_exposure_per_strategy_percent: 20.0
+  
+  # Cooldown periods
+  cooldown_after_loss_minutes: 30
+  cooldown_after_stop_loss_minutes: 60
+  
+  # TODO: Define strategy-specific overrides
+
+# ------------------------------------------------------------
+# Trade-Level Risk
+# ------------------------------------------------------------
+trade_risk:
+  # Position sizing
+  max_position_size_usd: 10000
+  max_position_size_percent: 5.0
+  
+  # Stop loss (mandatory)
+  stop_loss:
+    enabled: true
+    mandatory: true
+    max_percent: 5.0
+    default_percent: 2.0
+    
+  # Take profit
+  take_profit:
+    enabled: true
+    default_percent: 4.0
+    
+  # Entry validation
+  entry_validation:
+    require_minimum_volume_24h_usd: 1000000
+    require_minimum_liquidity_depth_usd: 100000
+    max_spread_percent: 0.5
+    
+  # TODO: Add slippage tolerance configuration
+
+# ------------------------------------------------------------
+# Drawdown Monitoring
+# ------------------------------------------------------------
+drawdown:
+  monitoring_enabled: true
+  
+  # Alert thresholds
+  alert_levels:
+    - level: "warning"
+      drawdown_percent: 3.0
+      action: "notify"
+      
+    - level: "critical"
+      drawdown_percent: 5.0
+      action: "reduce_exposure"
+      
+    - level: "emergency"
+      drawdown_percent: 10.0
+      action: "halt_trading"
+      
+  # Calculation settings
+  calculation:
+    window_type: "rolling"  # rolling, daily, weekly
+    window_size_days: 30
+    baseline: "high_water_mark"
+
+# ------------------------------------------------------------
+# Veto Rules
+# ------------------------------------------------------------
+veto_rules:
+  # Conditions that veto a trade
+  - name: "high_volatility"
+    description: "Market volatility exceeds threshold"
+    enabled: true
+    # TODO: Define volatility threshold
+    
+  - name: "low_confidence"
+    description: "Signal confidence below minimum"
+    enabled: true
+    min_confidence: 0.6
+    
+  - name: "negative_sentiment_spike"
+    description: "Sudden negative sentiment detected"
+    enabled: true
+    # TODO: Define sentiment threshold
+    
+  - name: "data_quality_issue"
+    description: "Input data quality is compromised"
+    enabled: true
+    
+  # TODO: Add additional veto rules
+
+# TODO: DECISION POINT - Risk parameter update mechanism (hot reload vs restart)

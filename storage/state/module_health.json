@@ -1,0 +1,90 @@
+{
+  "data_ingestion": {
+    "type": "core",
+    "status": "HEALTHY",
+    "cpu_usage": 5.0,
+    "memory_usage": 100.0,
+    "memory_limit": 1024.0,
+    "queue_backlog": 0,
+    "queue_max_size": 1000,
+    "requests_per_minute": 10,
+    "errors_per_minute": 0
+  },
+  "data_processing": {
+    "type": "core",
+    "status": "HEALTHY",
+    "cpu_usage": 5.0,
+    "memory_usage": 100.0,
+    "memory_limit": 1024.0,
+    "queue_backlog": 0,
+    "queue_max_size": 1000,
+    "requests_per_minute": 10,
+    "errors_per_minute": 0
+  },
+  "risk_scoring": {
+    "type": "core",
+    "status": "HEALTHY",
+    "cpu_usage": 5.0,
+    "memory_usage": 100.0,
+    "memory_limit": 1024.0,
+    "queue_backlog": 0,
+    "queue_max_size": 1000,
+    "requests_per_minute": 10,
+    "errors_per_minute": 0
+  },
+  "strategy_engine": {
+    "type": "core",
+    "status": "HEALTHY",
+    "cpu_usage": 5.0,
+    "memory_usage": 100.0,
+    "memory_limit": 1024.0,
+    "queue_backlog": 0,
+    "queue_max_size": 1000,
+    "requests_per_minute": 10,
+    "errors_per_minute": 0
+  },
+  "trade_guard": {
+    "type": "core",
+    "status": "HEALTHY",
+    "cpu_usage": 5.0,
+    "memory_usage": 100.0,
+    "memory_limit": 1024.0,
+    "queue_backlog": 0,
+    "queue_max_size": 1000,
+    "requests_per_minute": 10,
+    "errors_per_minute": 0
+  },
+  "system_risk_controller": {
+    "type": "core",
+    "status": "HEALTHY",
+    "cpu_usage": 5.0,
+    "memory_usage": 100.0,
+    "memory_limit": 1024.0,
+    "queue_backlog": 0,
+    "queue_max_size": 1000,
+    "requests_per_minute": 10,
+    "errors_per_minute": 0
+  },
+  "execution_engine": {
+    "type": "core",
+    "status": "HEALTHY",
+    "cpu_usage": 5.0,
+    "memory_usage": 100.0,
+    "memory_limit": 1024.0,
+    "queue_backlog": 0,
+    "queue_max_size": 1000,
+    "requests_per_minute": 10,
+    "errors_per_minute": 0
+  },
+  "monitoring": {
+    "type": "core",
+    "status": "HEALTHY",
+    "cpu_usage": 5.0,
+    "memory_usage": 100.0,
+    "memory_limit": 1024.0,
+    "queue_backlog": 0,
+    "queue_max_size": 1000,
+    "requests_per_minute": 10,
+    "errors_per_minute": 0
+  }
+}

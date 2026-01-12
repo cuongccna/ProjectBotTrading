@@ -1,0 +1,158 @@
+# =============================================================
+# Smart Money Confidence - Configuration
+# =============================================================
+# 
+# This configuration file controls the Smart Money Confidence
+# Weighting Engine behavior.
+#
+# To load: ConfidenceConfig.from_yaml(Path("config/smart_money_confidence.yaml"))
+# Requires: pip install pyyaml
+#
+# =============================================================
+
+# Analysis window (hours)
+analysis_window_hours: 24
+
+# Debug mode (logs additional calculation details)
+debug_mode: false
+
+# =============================================================
+# Entity Weights
+# =============================================================
+# Weight for each entity type (0.0 - 1.0)
+# Higher = more trusted signal
+
+entity_weights:
+  fund: 1.0            # Known funds/institutions - highest trust
+  market_maker: 0.8    # Market makers
+  whale: 0.6           # Large individual holders
+  cex: 0.3             # CEX wallets (often noise)
+  dex: 0.2             # DEX contracts/pools
+  bridge: 0.1          # Bridge contracts (usually noise)
+  unknown: 0.3         # Unidentified wallets
+
+# =============================================================
+# Noise Filter Configuration
+# =============================================================
+
+noise_filter:
+  # Enable/disable specific filters
+  filter_cex_internal: true       # Filter CEX deposit/withdrawal rotations
+  filter_bridge_activity: true    # Filter bridge without follow-through
+  filter_dust_transactions: true  # Filter tiny transactions
+  filter_round_trip: true         # Filter buy+sell within window
+  
+  # Thresholds
+  dust_threshold_usd: 100.0       # Ignore transactions below this
+  round_trip_window_hours: 4      # Window for detecting round-trips
+  round_trip_tolerance_pct: 0.05  # 5% tolerance for matching sizes
+  
+  # CEX/Bridge detection windows
+  cex_rotation_window_hours: 6
+  bridge_follow_through_hours: 24
+  
+  # Penalty factor (0.0 - 1.0)
+  noise_penalty_factor: 0.5
+
+# =============================================================
+# Cluster Configuration
+# =============================================================
+# Detects coordinated activity across multiple wallets
+
+cluster:
+  enabled: true
+  
+  # Minimum requirements
+  min_cluster_size: 3             # Need at least 3 wallets
+  min_cluster_volume_usd: 500000  # Need at least $500k total
+  
+  # Time window
+  cluster_window_minutes: 60      # 1 hour window
+  
+  # Alignment threshold
+  min_behavior_alignment: 0.7     # 70% must agree on direction
+  
+  # Confidence boost
+  max_cluster_boost: 15.0         # Maximum points added
+  boost_per_aligned_wallet: 2.0   # Points per additional wallet
+
+# =============================================================
+# Historical Accuracy Configuration
+# =============================================================
+
+historical_accuracy:
+  # Minimum history required
+  min_activities_for_accuracy: 10
+  
+  # Time horizons for measuring "success"
+  short_horizon_hours: 1
+  medium_horizon_hours: 24
+  
+  # Success threshold
+  success_threshold_pct: 2.0      # 2% move in predicted direction
+  
+  # Weight decay
+  decay_half_life_days: 30        # Older activities count less
+  
+  # Accuracy scoring
+  min_accuracy_for_boost: 0.6     # Need 60% accuracy for boost
+  max_accuracy_boost: 20.0        # Max points for accuracy
+
+# =============================================================
+# Context Alignment Configuration
+# =============================================================
+
+context_alignment:
+  enabled: true
+  
+  # Component weights
+  trend_alignment_weight: 0.4
+  volatility_weight: 0.3
+  level_proximity_weight: 0.3
+  
+  # Boosts
+  accumulation_in_downtrend_boost: 10.0  # Smart money buys dips
+  distribution_in_uptrend_boost: 10.0    # Smart money sells rallies
+  
+  # Volatility adjustments
+  high_volatility_penalty: 5.0
+  low_volatility_boost: 5.0
+
+# =============================================================
+# Confidence Thresholds
+# =============================================================
+
+thresholds:
+  # Level boundaries
+  low_max: 40.0                   # Below this = LOW
+  medium_max: 70.0                # Below this = MEDIUM, above = HIGH
+  
+  # Minimum data requirements
+  min_activities: 3               # Need at least 3 activities
+  min_volume_usd: 100000          # Need at least $100k
+  min_wallets: 1                  # Need at least 1 wallet
+  
+  # Score range
+  base_score: 50.0
+  max_score: 100.0
+  min_score: 0.0
+  
+  # Component weights (should sum to ~1.0)
+  entity_credibility_weight: 0.25
+  historical_accuracy_weight: 0.25
+  context_alignment_weight: 0.20
+  cluster_weight: 0.15
+  consistency_weight: 0.15
+
+# =============================================================
+# Data Source Reliability
+# =============================================================
+
+source_weights:
+  manual: 1.0           # Manually verified
+  arkham: 0.95          # Arkham Intelligence
+  nansen: 0.9           # Nansen labels
+  on_chain: 0.85        # Direct on-chain analysis
+  coinglass: 0.7        # Coinglass API
+  crypto_news_api: 0.6  # CryptoNews API
+  unknown: 0.4          # Unknown source

@@ -1,0 +1,127 @@
+# ============================================================
+# Data Sources Configuration
+# ============================================================
+#
+# This file configures all external data sources.
+# Each source must have: name, type, priority, health check.
+#
+# ============================================================
+
+# ------------------------------------------------------------
+# News Data Sources
+# ------------------------------------------------------------
+news_sources:
+  crypto_news_api:
+    enabled: true
+    name: "CryptoNewsAPI"
+    type: "rest"
+    base_url: "https://cryptonews-api.com/api/v1"
+    # API key from environment: CRYPTO_NEWS_API_KEY
+    
+    polling:
+      interval_seconds: 60
+      batch_size: 50
+      
+    rate_limits:
+      requests_per_minute: 30
+      
+    health_check:
+      endpoint: "/health"
+      timeout_seconds: 10
+      
+    # TODO: Define response schema validation
+    
+  # TODO: Add additional news sources
+
+# ------------------------------------------------------------
+# Market Data Sources
+# ------------------------------------------------------------
+market_data:
+  coingecko:
+    enabled: true
+    name: "CoinGecko"
+    type: "rest"
+    base_url: "https://api.coingecko.com/api/v3"
+    # API key from environment: COINGECKO_API_KEY (optional)
+    
+    polling:
+      interval_seconds: 60
+      
+    rate_limits:
+      requests_per_minute: 30  # Free tier limit
+      
+    health_check:
+      endpoint: "/ping"
+      timeout_seconds: 10
+      
+  exchange_websocket:
+    enabled: false
+    name: "ExchangeWebSocket"
+    type: "websocket"
+    # TODO: DECISION POINT - Define exchange WebSocket configuration
+    
+    reconnection:
+      max_attempts: 10
+      backoff_seconds: [1, 2, 5, 10, 30]
+      
+    health_check:
+      heartbeat_interval_seconds: 30
+
+# ------------------------------------------------------------
+# On-Chain Data Sources
+# ------------------------------------------------------------
+onchain_sources:
+  # Free on-chain data sources
+  # TODO: DECISION POINT - Which on-chain data providers to use?
+  
+  blockchain_explorer:
+    enabled: false
+    name: "BlockchainExplorer"
+    type: "rest"
+    # TODO: Configure blockchain explorer API
+    
+  # TODO: Add additional on-chain sources
+
+# ------------------------------------------------------------
+# Source Priority & Fallback
+# ------------------------------------------------------------
+source_priority:
+  # Priority order for data sources (higher = preferred)
+  news:
+    - source: "crypto_news_api"
+      priority: 100
+      
+  market:
+    - source: "exchange_websocket"
+      priority: 100
+    - source: "coingecko"
+      priority: 50  # Fallback
+      
+  onchain:
+    - source: "blockchain_explorer"
+      priority: 100
+
+# ------------------------------------------------------------
+# Data Quality Settings
+# ------------------------------------------------------------
+data_quality:
+  # Maximum age before data is considered stale
+  staleness_thresholds:
+    news_seconds: 300
+    market_seconds: 60
+    onchain_seconds: 600
+    
+  # Minimum sources required
+  minimum_sources:
+    news: 1
+    market: 1
+    onchain: 0  # Optional
+    
+  # Deduplication
+  deduplication:
+    enabled: true
+    window_seconds: 3600
+    
+  # TODO: Define data validation rules
+
+# TODO: Add additional data source configuration as needed

@@ -1,0 +1,142 @@
+# ============================================================
+# Data Source Health Scoring Configuration
+# ============================================================
+#
+# This file configures the health scoring system for all
+# external data sources.
+#
+# SCORING MODEL:
+# final_score = 
+#   availability * weight_availability +
+#   freshness    * weight_freshness +
+#   consistency  * weight_consistency +
+#   completeness * weight_completeness +
+#   error_rate   * weight_error_rate
+#
+# ============================================================
+
+# ------------------------------------------------------------
+# Dimension Weights (must sum to 1.0)
+# ------------------------------------------------------------
+weights:
+  availability: 0.25   # API uptime, timeout frequency
+  freshness: 0.25      # Data delay, timestamp drift
+  consistency: 0.20    # Value jumps, cross-source deviation
+  completeness: 0.20   # Missing fields, partial records
+  error_rate: 0.10     # HTTP errors, parsing failures
+
+# ------------------------------------------------------------
+# Health State Thresholds
+# ------------------------------------------------------------
+thresholds:
+  healthy: 85    # score >= 85 = HEALTHY
+  degraded: 65   # 65 <= score < 85 = DEGRADED
+                 # score < 65 = CRITICAL
+
+# ------------------------------------------------------------
+# Evaluation Settings
+# ------------------------------------------------------------
+evaluation_interval_seconds: 30   # How often to evaluate
+metrics_window_seconds: 300       # 5 minute rolling window
+min_samples_for_scoring: 5        # Minimum samples required
+
+# ------------------------------------------------------------
+# Alerting
+# ------------------------------------------------------------
+alerting:
+  on_degradation: true   # Alert when source becomes DEGRADED
+  on_critical: true      # Alert when source becomes CRITICAL
+  on_recovery: true      # Alert when source recovers
+
+# ------------------------------------------------------------
+# Fallback Behavior
+# ------------------------------------------------------------
+fallback:
+  assume_critical_on_error: true   # Assume CRITICAL if scoring fails
+  auto_disable_on_critical: false  # Auto-disable after repeated CRITICAL
+  critical_count_before_disable: 3 # Consecutive CRITICALs before disable
+
+# ------------------------------------------------------------
+# Logging
+# ------------------------------------------------------------
+logging:
+  log_all_evaluations: true    # Log every evaluation
+  log_transitions_only: false  # Only log state changes
+
+# ------------------------------------------------------------
+# Dimension-Specific Thresholds
+# ------------------------------------------------------------
+
+# Availability
+availability:
+  uptime:
+    excellent: 99.9   # Score 100
+    good: 99.0        # Score 85
+    poor: 95.0        # Score 50
+  timeout_percent:
+    excellent: 0.1
+    good: 1.0
+    poor: 5.0
+  retry_success:
+    excellent: 95.0
+    good: 80.0
+    poor: 50.0
+
+# Freshness
+freshness:
+  delay_seconds:
+    excellent: 1.0    # Score 100
+    good: 5.0         # Score 85
+    poor: 30.0        # Score 50
+    stale: 60.0       # Score 0 (data is stale)
+  timestamp_drift:
+    excellent: 0.5
+    good: 2.0
+    poor: 10.0
+
+# Consistency
+consistency:
+  value_jump_percent:
+    normal: 5.0       # Expected variation
+    warning: 10.0     # Suspicious
+    anomaly: 20.0     # Likely error
+  cross_source_deviation:
+    excellent: 0.1
+    good: 0.5
+    poor: 2.0
+
+# Completeness
+completeness:
+  missing_fields_percent:
+    excellent: 0.0
+    good: 5.0
+    poor: 20.0
+  partial_records_percent:
+    excellent: 0.0
+    good: 2.0
+    poor: 10.0
+
+# Error Rate
+error_rate:
+  percent:
+    excellent: 0.1
+    good: 1.0
+    poor: 5.0
+    critical: 10.0    # Score 0
+
+# ============================================================
+# Source-Specific Overrides (optional)
+# ============================================================
+# 
+# sources:
+#   binance:
+#     weights:
+#       availability: 0.30  # Higher weight for exchange
+#     thresholds:
+#       healthy: 90         # Stricter threshold
+#   
+#   cryptonews_api:
+#     thresholds:
+#       healthy: 75         # More lenient for news
+#       degraded: 50
+# ============================================================

@@ -1,0 +1,56 @@
+# ============================================================
+# System Configuration
+# ============================================================
+#
+# This file contains system-wide configuration parameters.
+# Changes to this file require system restart.
+#
+# ============================================================
+
+system:
+  name: "crypto-trading-platform"
+  version: "0.1.0"
+  environment: "${ENVIRONMENT:development}"
+  
+  # System clock configuration
+  clock:
+    timezone: "UTC"
+    # TODO: DECISION POINT - Support for multiple timezones?
+    
+  # Orchestrator settings
+  orchestrator:
+    tick_interval_seconds: 60
+    max_concurrent_tasks: 10
+    shutdown_timeout_seconds: 30
+    
+  # State management
+  state:
+    persistence_enabled: true
+    snapshot_interval_seconds: 300
+    # TODO: Define state recovery strategy
+    
+  # Logging
+  logging:
+    level: "INFO"
+    format: "json"
+    # Structured logging is mandatory
+    include_timestamps: true
+    include_correlation_id: true
+    
+  # Health checks
+  health:
+    enabled: true
+    check_interval_seconds: 30
+    failure_threshold: 3
+    # After N consecutive failures, escalate
+
+# Feature flags
+features:
+  live_trading: false
+  backtesting: true
+  telegram_alerts: true
+  dashboard: false
+  chaos_testing: false
+  # TODO: Add feature flag management system
+
+# TODO: Add additional system parameters as needed

@@ -1,0 +1,38 @@
+[
+  {
+    "id": "pos_001",
+    "symbol": "BTCUSDT",
+    "exchange": "binance",
+    "side": "long",
+    "size": "0.1",
+    "notional_value": "4550.00",
+    "entry_price": "45000.00",
+    "current_price": "45500.00",
+    "liquidation_price": "38000.00",
+    "unrealized_pnl": "50.00",
+    "realized_pnl": "0.00",
+    "leverage": 5,
+    "margin_used": "910.00",
+    "opened_at": "2026-01-11T07:35:58.587540",
+    "updated_at": "2026-01-11T07:35:58.587540",
+    "strategy": "momentum"
+  },
+  {
+    "id": "pos_002",
+    "symbol": "ETHUSDT",
+    "exchange": "binance",
+    "side": "long",
+    "size": "1.0",
+    "notional_value": "2520.00",
+    "entry_price": "2500.00",
+    "current_price": "2520.00",
+    "liquidation_price": "1800.00",
+    "unrealized_pnl": "20.00",
+    "realized_pnl": "0.00",
+    "leverage": 3,
+    "margin_used": "840.00",
+    "opened_at": "2026-01-11T07:35:58.588537",
+    "updated_at": "2026-01-11T07:35:58.588537",
+    "strategy": "trend_following"
+  }
+]

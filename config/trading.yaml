@@ -1,0 +1,103 @@
+# ============================================================
+# Trading Configuration
+# ============================================================
+#
+# This file defines trading parameters and strategies.
+# Execution parameters are separate from risk parameters.
+#
+# ============================================================
+
+# ------------------------------------------------------------
+# General Trading Settings
+# ------------------------------------------------------------
+trading:
+  enabled: false  # Must be explicitly enabled
+  mode: "paper"   # paper, live
+  
+  # Supported assets
+  assets:
+    quote_currency: "USDT"
+    # TODO: DECISION POINT - Define supported trading pairs
+    allowed_pairs: []
+    blocked_pairs: []
+    
+  # Trading hours (optional)
+  trading_hours:
+    enabled: false
+    # TODO: Define trading hour restrictions if needed
+
+# ------------------------------------------------------------
+# Order Execution Settings
+# ------------------------------------------------------------
+execution:
+  # Order types
+  default_order_type: "limit"  # market, limit
+  
+  # Limit order settings
+  limit_order:
+    price_offset_percent: 0.1  # Offset from mid price
+    timeout_seconds: 60
+    cancel_on_timeout: true
+    
+  # Market order settings
+  market_order:
+    max_slippage_percent: 0.5
+    
+  # Retry settings
+  retry:
+    max_attempts: 3
+    backoff_seconds: [1, 5, 15]
+    
+  # Validation
+  validation:
+    require_balance_check: true
+    require_risk_approval: true
+    require_decision_state: true
+    
+  # Idempotency
+  idempotency:
+    enabled: true
+    key_ttl_seconds: 3600
+
+# ------------------------------------------------------------
+# Position Management
+# ------------------------------------------------------------
+positions:
+  # Maximum concurrent positions
+  max_total_positions: 10
+  max_positions_per_asset: 1
+  
+  # Position tracking
+  tracking:
+    update_interval_seconds: 10
+    reconciliation_interval_seconds: 300
+    
+  # TODO: Define position scaling rules
+
+# ------------------------------------------------------------
+# Strategy Configuration
+# ------------------------------------------------------------
+strategies:
+  # TODO: DECISION POINT - Define strategy framework
+  # Strategies should be defined here or in separate files
+  
+  default_strategy:
+    enabled: false
+    # TODO: Define default strategy parameters
+
+# ------------------------------------------------------------
+# Signal Requirements
+# ------------------------------------------------------------
+signals:
+  # Minimum requirements for trade entry
+  min_composite_score: 0.6
+  min_confidence: 0.7
+  max_age_seconds: 60
+  
+  # Required signal components
+  required_components:
+    - "risk_score"
+    - "sentiment_score"
+    # TODO: Define additional required components
+
+# TODO: Add additional trading configuration as needed

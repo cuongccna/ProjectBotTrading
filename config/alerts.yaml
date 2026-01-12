@@ -1,0 +1,158 @@
+# ============================================================
+# Alerts Configuration
+# ============================================================
+#
+# This file configures all alerting and notification settings.
+# Telegram is the primary notification channel.
+# Silence is considered a failure.
+#
+# ============================================================
+
+# ------------------------------------------------------------
+# Telegram Configuration
+# ------------------------------------------------------------
+telegram:
+  enabled: true
+  # Credentials from environment: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+  
+  # Message formatting
+  formatting:
+    parse_mode: "HTML"
+    disable_web_page_preview: true
+    
+  # Rate limiting (Telegram limits)
+  rate_limits:
+    messages_per_second: 1
+    messages_per_minute: 20
+    
+  # Retry settings
+  retry:
+    max_attempts: 3
+    backoff_seconds: [1, 5, 15]
+    
+  # Channels (different chats for different severity)
+  channels:
+    default:
+      chat_id: "${TELEGRAM_CHAT_ID}"
+      
+    critical:
+      chat_id: "${TELEGRAM_ALERT_CHAT_ID:${TELEGRAM_CHAT_ID}}"
+      # Falls back to default if not set
+
+# ------------------------------------------------------------
+# Alert Categories
+# ------------------------------------------------------------
+alert_categories:
+  # System health alerts
+  system:
+    enabled: true
+    channel: "default"
+    throttle_seconds: 300  # Avoid spam
+    
+  # Risk alerts
+  risk:
+    enabled: true
+    channel: "critical"
+    throttle_seconds: 60
+    
+  # Trade alerts
+  trade:
+    enabled: true
+    channel: "default"
+    throttle_seconds: 0  # No throttling
+    
+  # Performance alerts
+  performance:
+    enabled: true
+    channel: "default"
+    throttle_seconds: 3600
+    
+  # Error alerts
+  error:
+    enabled: true
+    channel: "critical"
+    throttle_seconds: 60
+
+# ------------------------------------------------------------
+# Alert Severity Levels
+# ------------------------------------------------------------
+severity_levels:
+  info:
+    emoji: "ℹ️"
+    notify: true
+    escalate: false
+    
+  warning:
+    emoji: "⚠️"
+    notify: true
+    escalate: false
+    
+  error:
+    emoji: "❌"
+    notify: true
+    escalate: true
+    
+  critical:
+    emoji: "🚨"
+    notify: true
+    escalate: true
+    require_acknowledgment: true
+
+# ------------------------------------------------------------
+# Scheduled Reports
+# ------------------------------------------------------------
+scheduled_reports:
+  daily_summary:
+    enabled: true
+    schedule: "0 0 * * *"  # Midnight UTC
+    channel: "default"
+    
+  performance_report:
+    enabled: true
+    schedule: "0 6 * * *"  # 6 AM UTC
+    channel: "default"
+    
+  # TODO: Define additional scheduled reports
+
+# ------------------------------------------------------------
+# Heartbeat / Liveness
+# ------------------------------------------------------------
+heartbeat:
+  enabled: true
+  interval_seconds: 3600  # Every hour
+  channel: "default"
+  message: "System heartbeat: All systems operational"
+  
+  # If heartbeat fails to send, escalate
+  failure_escalation:
+    enabled: true
+    after_missed_count: 2
+
+# ------------------------------------------------------------
+# Alert Templates
+# ------------------------------------------------------------
+templates:
+  # TODO: Define message templates for each alert type
+  
+  trade_entry: |
+    📈 <b>Trade Entry</b>
+    Asset: {asset}
+    Side: {side}
+    Size: {size}
+    Price: {price}
+    
+  trade_exit: |
+    📉 <b>Trade Exit</b>
+    Asset: {asset}
+    PnL: {pnl}
+    Duration: {duration}
+    
+  risk_alert: |
+    🚨 <b>Risk Alert</b>
+    Level: {level}
+    Message: {message}
+    Action: {action}
+    
+  # TODO: Add additional templates
+
+# TODO: DECISION POINT - Add additional notification channels (email, Slack, etc.)?

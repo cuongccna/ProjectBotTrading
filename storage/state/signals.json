@@ -1,0 +1,17 @@
+[
+  {
+    "id": "sig_001",
+    "strategy": "momentum",
+    "type": "entry",
+    "symbol": "BTCUSDT",
+    "exchange": "binance",
+    "direction": "BUY",
+    "strength": "0.75",
+    "generated_at": "2026-01-11T07:35:58.594224",
+    "processed": true,
+    "processed_at": "2026-01-11T07:35:58.594224",
+    "resulted_in_order": true,
+    "order_id": "ord_001",
+    "source_data_timestamp": "2026-01-11T07:35:58.594224"
+  }
+]
