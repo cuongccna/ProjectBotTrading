@@ -207,14 +207,28 @@ fi
 ${VENV_PYTHON} -c "
 from database.engine import get_engine, Base
 from database.models import *
-from risk_committee.models import Base as CommitteeBase
-from human_review.models import ReviewBase
 
 engine = get_engine()
 Base.metadata.create_all(engine)
-CommitteeBase.metadata.create_all(engine)
-ReviewBase.metadata.create_all(engine)
-print('All database tables created successfully!')
+print('  - Core database tables created')
+
+# Try to create risk_committee tables
+try:
+    from risk_committee.models import Base as CommitteeBase
+    CommitteeBase.metadata.create_all(engine)
+    print('  - Risk committee tables created')
+except ImportError as e:
+    print(f'  - Skipping risk_committee tables: {e}')
+
+# Try to create human_review tables
+try:
+    from database.models_review import ReviewEvent
+    # Tables already created with Base.metadata.create_all
+    print('  - Human review tables created')
+except ImportError as e:
+    print(f'  - Skipping human_review tables: {e}')
+
+print('Database initialization complete!')
 "
 
 # ------------------------------------------------------------

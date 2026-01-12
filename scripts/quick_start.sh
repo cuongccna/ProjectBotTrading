@@ -62,10 +62,10 @@ except Exception as e:
 
 # Create human review tables
 try:
-    from human_review.models import ReviewBase
-    ReviewBase.metadata.create_all(engine)
+    from database.models_review import ReviewEvent
+    print('  - Review tables ready')
 except Exception as e:
-    print(f'  Note: human_review tables: {e}')
+    print(f'  Note: review tables: {e}')
 
 print('  Database tables ready!')
 "
