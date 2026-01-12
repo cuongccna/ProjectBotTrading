@@ -16,7 +16,8 @@ module.exports = {
       max_memory_restart: '1G',
       env: {
         NODE_ENV: 'production',
-        PYTHONUNBUFFERED: '1'
+        PYTHONUNBUFFERED: '1',
+        TICK_INTERVAL_SECONDS: '3600'  //1 hour
       },
       error_file: './logs/trader-error.log',
       out_file: './logs/trader-out.log',
@@ -42,7 +43,7 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PYTHONUNBUFFERED: '1',
-        PORT: '8000'
+        PORT: '9000'
       },
       error_file: './logs/dashboard-error.log',
       out_file: './logs/dashboard-out.log',
