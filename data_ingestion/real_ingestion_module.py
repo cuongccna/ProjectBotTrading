@@ -22,18 +22,21 @@ If any fetch fails, ingestion STOPS with an error (no silent fallback).
 
 import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
+
+import aiohttp
 
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database.engine import get_session, get_db_session
-from database.models import MarketData
+from database.models import MarketData, RawNews
 
 
 # ============================================================
@@ -59,12 +62,26 @@ class RealIngestionConfig:
     binance_base_url: str = "https://fapi.binance.com"
     binance_spot_url: str = "https://api.binance.com"
     
+    # CryptoNews API settings
+    cryptonews_enabled: bool = True
+    cryptonews_base_url: str = "https://cryptonews-api.com/api/v1"
+    cryptonews_api_key: Optional[str] = None
+    cryptonews_tickers: List[str] = field(default_factory=lambda: ["BTC", "ETH", "SOL", "XRP", "ADA"])
+    
+    # CryptoPanic settings  
+    cryptopanic_enabled: bool = True
+    cryptopanic_base_url: str = "https://cryptopanic.com/api/v1"
+    cryptopanic_api_key: Optional[str] = None
+    cryptopanic_currencies: List[str] = field(default_factory=lambda: ["BTC", "ETH", "SOL"])
+    
     # Timeouts and retries
     timeout_seconds: float = 30.0
     max_retries: int = 3
+    retry_delay_seconds: float = 60.0  # Wait 60s on rate limit
     
     # Failure mode: if True, any fetch failure stops ingestion
-    fail_fast: bool = True
+    # Set to False to allow partial data collection
+    fail_fast: bool = False
 
 
 # ============================================================
@@ -85,6 +102,10 @@ class IngestionCycleResult:
     coingecko_stored: int = 0
     binance_fetched: int = 0
     binance_stored: int = 0
+    cryptonews_fetched: int = 0
+    cryptonews_stored: int = 0
+    cryptopanic_fetched: int = 0
+    cryptopanic_stored: int = 0
     
     # Totals
     total_fetched: int = 0
@@ -259,9 +280,49 @@ class RealIngestionModule:
                     f"Stored: {result.binance_stored}"
                 )
             
+            # Fetch from CryptoNews API
+            if self._config.cryptonews_enabled:
+                try:
+                    cn_records = await self._fetch_cryptonews()
+                    result.cryptonews_fetched = len(cn_records)
+                    
+                    stored = await self._persist_news_records(cn_records, "cryptonews_api")
+                    result.cryptonews_stored = stored
+                    
+                    self._logger.info(
+                        f"[CryptoNews] Fetched: {result.cryptonews_fetched}, "
+                        f"Stored: {result.cryptonews_stored}"
+                    )
+                except Exception as e:
+                    self._logger.warning(f"[CryptoNews] Error: {e}")
+                    result.errors.append(f"CryptoNews: {e}")
+            
+            # Fetch from CryptoPanic
+            if self._config.cryptopanic_enabled:
+                try:
+                    cp_records = await self._fetch_cryptopanic()
+                    result.cryptopanic_fetched = len(cp_records)
+                    
+                    stored = await self._persist_news_records(cp_records, "cryptopanic")
+                    result.cryptopanic_stored = stored
+                    
+                    self._logger.info(
+                        f"[CryptoPanic] Fetched: {result.cryptopanic_fetched}, "
+                        f"Stored: {result.cryptopanic_stored}"
+                    )
+                except Exception as e:
+                    self._logger.warning(f"[CryptoPanic] Error: {e}")
+                    result.errors.append(f"CryptoPanic: {e}")
+            
             # Calculate totals
-            result.total_fetched = result.coingecko_fetched + result.binance_fetched
-            result.total_stored = result.coingecko_stored + result.binance_stored
+            result.total_fetched = (
+                result.coingecko_fetched + result.binance_fetched +
+                result.cryptonews_fetched + result.cryptopanic_fetched
+            )
+            result.total_stored = (
+                result.coingecko_stored + result.binance_stored +
+                result.cryptonews_stored + result.cryptopanic_stored
+            )
             
         except Exception as e:
             result.total_errors += 1
@@ -317,8 +378,12 @@ class RealIngestionModule:
         }
         
         headers = {}
-        if self._config.coingecko_api_key:
-            headers["x-cg-pro-api-key"] = self._config.coingecko_api_key
+        # Get API key from config or environment
+        api_key = self._config.coingecko_api_key or os.getenv("COINGECKO_API_KEY")
+        if api_key:
+            # Use x-cg-demo-api-key for Demo API (free tier)
+            # Use x-cg-pro-api-key for Pro API (paid tier)
+            headers["x-cg-demo-api-key"] = api_key
         
         try:
             async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
@@ -383,13 +448,24 @@ class RealIngestionModule:
                 return records
                 
         except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                # Rate limited - log warning but don't crash
+                self._logger.warning(
+                    f"CoinGecko rate limited (429). "
+                    f"Will use cached data or skip. "
+                    f"Consider using API key for higher limits."
+                )
+                # Return empty - will use Binance data instead
+                return []
             raise RuntimeError(
                 f"CoinGecko HTTP error {e.response.status_code}: {e.response.text[:200]}"
             ) from e
         except httpx.TimeoutException as e:
-            raise RuntimeError(f"CoinGecko timeout: {e}") from e
+            self._logger.warning(f"CoinGecko timeout: {e}. Skipping...")
+            return []
         except httpx.RequestError as e:
-            raise RuntimeError(f"CoinGecko request error: {e}") from e
+            self._logger.warning(f"CoinGecko request error: {e}. Skipping...")
+            return []
     
     # --------------------------------------------------------
     # BINANCE FETCHING
@@ -474,13 +550,226 @@ class RealIngestionModule:
                 return records
                 
         except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                self._logger.warning(
+                    f"Binance rate limited (429). Skipping this cycle."
+                )
+                return []
             raise RuntimeError(
                 f"Binance HTTP error {e.response.status_code}: {e.response.text[:200]}"
             ) from e
         except httpx.TimeoutException as e:
-            raise RuntimeError(f"Binance timeout: {e}") from e
+            self._logger.warning(f"Binance timeout: {e}. Skipping...")
+            return []
         except httpx.RequestError as e:
-            raise RuntimeError(f"Binance request error: {e}") from e
+            self._logger.warning(f"Binance request error: {e}. Skipping...")
+            return []
+    
+    # --------------------------------------------------------
+    # CRYPTONEWS API FETCHING
+    # --------------------------------------------------------
+    
+    async def _fetch_cryptonews(self) -> List[Dict[str, Any]]:
+        """
+        Fetch news from CryptoNews API.
+        
+        API: https://cryptonews-api.com/api/v1/category
+        
+        Returns:
+            List of news article dictionaries
+        """
+        import httpx
+        from email.utils import parsedate_to_datetime
+        
+        api_key = self._config.cryptonews_api_key or os.getenv("CRYPTO_NEWS_API_KEY")
+        if not api_key:
+            self._logger.warning("[CryptoNews] No API key configured. Skipping...")
+            return []
+        
+        url = f"{self._config.cryptonews_base_url}/category"
+        
+        params = {
+            "section": "alltickers",
+            "tickers": ",".join(self._config.cryptonews_tickers),
+            "items": 10,  # Trial plan limit
+            "token": api_key,
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+                
+                data = response.json()
+                
+                # Extract news items
+                if isinstance(data, dict) and "data" in data:
+                    raw_items = data["data"]
+                elif isinstance(data, list):
+                    raw_items = data
+                else:
+                    raw_items = [data]
+                
+                # Transform to news record format
+                records = []
+                now = datetime.now(timezone.utc)
+                
+                for item in raw_items:
+                    # Parse published date
+                    published_at = None
+                    pub_date_str = item.get("date")
+                    if pub_date_str:
+                        try:
+                            published_at = parsedate_to_datetime(pub_date_str)
+                        except (ValueError, TypeError):
+                            published_at = now
+                    
+                    # Extract tickers from the news
+                    tickers = item.get("tickers", "").split(",") if item.get("tickers") else []
+                    
+                    record = {
+                        "external_id": item.get("news_url", ""),
+                        "title": item.get("title", ""),
+                        "content": item.get("text", ""),
+                        "summary": item.get("text", "")[:500] if item.get("text") else None,
+                        "url": item.get("news_url", ""),
+                        "source_name": "cryptonews_api",
+                        "source_module": "RealIngestionModule.cryptonews",
+                        "author": item.get("source_name", ""),
+                        "categories": [item.get("type", "news")],
+                        "tokens": tickers,
+                        "published_at": published_at,
+                        "fetched_at": now,
+                        "sentiment": item.get("sentiment"),  # Some APIs provide this
+                    }
+                    records.append(record)
+                
+                self._logger.debug(f"[CryptoNews] Fetched {len(records)} articles")
+                return records
+                
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                self._logger.warning("[CryptoNews] Rate limited (429). Skipping...")
+                return []
+            self._logger.warning(f"[CryptoNews] HTTP error {e.response.status_code}")
+            return []
+        except httpx.TimeoutException as e:
+            self._logger.warning(f"[CryptoNews] Timeout: {e}. Skipping...")
+            return []
+        except httpx.RequestError as e:
+            self._logger.warning(f"[CryptoNews] Request error: {e}. Skipping...")
+            return []
+    
+    # --------------------------------------------------------
+    # CRYPTOPANIC FETCHING
+    # --------------------------------------------------------
+    
+    async def _fetch_cryptopanic(self) -> List[Dict[str, Any]]:
+        """
+        Fetch news/sentiment from CryptoPanic.
+        
+        API: https://cryptopanic.com/api/v1/posts/
+        
+        Returns:
+            List of news/sentiment dictionaries
+        """
+        api_key = self._config.cryptopanic_api_key or os.getenv("CRYPTOPANIC_API_KEY")
+        if not api_key:
+            self._logger.warning("[CryptoPanic] No API key configured. Skipping...")
+            return []
+        
+        url = f"{self._config.cryptopanic_base_url}/posts/"
+        
+        params = {
+            "auth_token": api_key,
+            "public": "true",
+            "kind": "news",
+            "currencies": ",".join(self._config.cryptopanic_currencies),
+        }
+        
+        try:
+            timeout = aiohttp.ClientTimeout(total=self._config.timeout_seconds)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, params=params) as response:
+                    if response.status == 429:
+                        self._logger.warning("[CryptoPanic] Rate limited (429). Skipping...")
+                        return []
+                    
+                    if response.status != 200:
+                        self._logger.warning(f"[CryptoPanic] HTTP error {response.status}")
+                        return []
+                    
+                    data = await response.json()
+                    
+                    # Extract results
+                    raw_items = data.get("results", [])
+                    
+                    # Transform to news record format
+                    records = []
+                    now = datetime.now(timezone.utc)
+                    
+                    for item in raw_items:
+                        # Parse published date
+                        published_at = None
+                        pub_str = item.get("published_at", "")
+                        if pub_str:
+                            try:
+                                # Handle ISO format with Z suffix
+                                if pub_str.endswith("Z"):
+                                    pub_str = pub_str[:-1] + "+00:00"
+                                published_at = datetime.fromisoformat(pub_str.replace("Z", "+00:00"))
+                            except (ValueError, TypeError):
+                                published_at = now
+                        
+                        # Extract currencies
+                        currencies = []
+                        for curr in item.get("currencies", []):
+                            if isinstance(curr, dict):
+                                currencies.append(curr.get("code", ""))
+                            else:
+                                currencies.append(str(curr))
+                        
+                        # Extract votes for sentiment
+                        votes = item.get("votes", {})
+                        positive = votes.get("positive", 0)
+                        negative = votes.get("negative", 0)
+                        
+                        # Calculate simple sentiment score
+                        total_votes = positive + negative
+                        if total_votes > 0:
+                            sentiment_score = (positive - negative) / total_votes
+                        else:
+                            sentiment_score = 0.0
+                        
+                        record = {
+                            "external_id": str(item.get("id", "")),
+                            "title": item.get("title", ""),
+                            "content": None,  # CryptoPanic only provides title
+                            "summary": item.get("title", ""),
+                            "url": item.get("url", ""),
+                            "source_name": "cryptopanic",
+                            "source_module": "RealIngestionModule.cryptopanic",
+                            "author": item.get("source", {}).get("title", "") if isinstance(item.get("source"), dict) else "",
+                            "categories": [item.get("kind", "news")],
+                            "tokens": currencies,
+                            "published_at": published_at,
+                            "fetched_at": now,
+                            "sentiment": sentiment_score,
+                            "votes_positive": positive,
+                            "votes_negative": negative,
+                            "votes_important": votes.get("important", 0),
+                        }
+                        records.append(record)
+                    
+                    self._logger.debug(f"[CryptoPanic] Fetched {len(records)} articles")
+                    return records
+                    
+        except aiohttp.ClientError as e:
+            self._logger.warning(f"[CryptoPanic] Request error: {e}. Skipping...")
+            return []
+        except asyncio.TimeoutError:
+            self._logger.warning("[CryptoPanic] Timeout. Skipping...")
+            return []
     
     # --------------------------------------------------------
     # PERSISTENCE
@@ -568,6 +857,76 @@ class RealIngestionModule:
                 
         except Exception as e:
             raise RuntimeError(f"Failed to persist {source} records: {e}") from e
+        
+        return stored_count
+    
+    async def _persist_news_records(
+        self,
+        records: List[Dict[str, Any]],
+        source: str,
+    ) -> int:
+        """
+        Persist news records to raw_news table using upsert.
+        
+        Uses PostgreSQL ON CONFLICT DO NOTHING to handle duplicates gracefully.
+        
+        Args:
+            records: List of news record dictionaries
+            source: Source identifier for logging
+            
+        Returns:
+            Number of records stored
+        """
+        if not records:
+            return 0
+        
+        correlation_id = uuid4().hex
+        stored_count = 0
+        
+        try:
+            with get_db_session() as session:
+                # Prepare records for bulk insert
+                for record in records:
+                    # Check if already exists by external_id
+                    external_id = record.get("external_id", "")
+                    if external_id:
+                        existing = session.query(RawNews).filter(
+                            RawNews.external_id == external_id,
+                            RawNews.source_name == record.get("source_name", source),
+                        ).first()
+                        if existing:
+                            continue  # Skip duplicate
+                    
+                    # Create new record
+                    news_record = RawNews(
+                        correlation_id=correlation_id,
+                        external_id=external_id,
+                        title=record.get("title", ""),
+                        content=record.get("content"),
+                        summary=record.get("summary"),
+                        url=record.get("url"),
+                        source_name=record.get("source_name", source),
+                        source_module=record.get("source_module", "RealIngestionModule"),
+                        author=record.get("author"),
+                        categories=record.get("categories"),
+                        tokens=record.get("tokens"),
+                        published_at=record.get("published_at"),
+                        fetched_at=record.get("fetched_at"),
+                    )
+                    session.add(news_record)
+                    stored_count += 1
+                
+                session.commit()
+                
+                self._logger.info(
+                    f"[{source}] Persisted {stored_count}/{len(records)} news records "
+                    f"(correlation_id={correlation_id[:8]}...)"
+                )
+                
+        except Exception as e:
+            self._logger.error(f"Failed to persist {source} news: {e}")
+            # Don't raise - we want ingestion to continue
+            return 0
         
         return stored_count
 

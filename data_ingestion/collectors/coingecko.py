@@ -116,7 +116,9 @@ class CoinGeckoCollector(BaseCollector[RawMarketItem]):
                 
                 headers = {}
                 if self._cg_config.api_key:
-                    headers["x-cg-pro-api-key"] = self._cg_config.api_key
+                    # Use x-cg-demo-api-key for Demo API (free tier)
+                    # Use x-cg-pro-api-key for Pro API (paid tier)
+                    headers["x-cg-demo-api-key"] = self._cg_config.api_key
                 
                 response = await client.get(url, params=params, headers=headers)
                 response.raise_for_status()

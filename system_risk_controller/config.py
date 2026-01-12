@@ -350,8 +350,8 @@ class MonitorTimingConfig:
     Configuration for monitor execution timing.
     """
     
-    check_interval_seconds: float = 5.0
-    """How often monitors run."""
+    check_interval_seconds: float = 30.0
+    """How often monitors run (default: 30s to reduce log spam)."""
     
     monitor_timeout_seconds: float = 10.0
     """Timeout for individual monitors."""
@@ -359,7 +359,7 @@ class MonitorTimingConfig:
     health_snapshot_interval_seconds: float = 60.0
     """How often to generate health snapshots."""
     
-    stale_monitor_threshold_seconds: float = 30.0
+    stale_monitor_threshold_seconds: float = 60.0
     """When to consider a monitor result stale."""
 
 
