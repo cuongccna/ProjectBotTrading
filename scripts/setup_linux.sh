@@ -62,11 +62,10 @@ apt update && apt upgrade -y
 # 2. Install System Dependencies
 # ------------------------------------------------------------
 echo -e "\n${YELLOW}[2/7] Installing system dependencies...${NC}"
+
+# First install basic dependencies
 apt install -y \
-    python${PYTHON_VERSION} \
-    python${PYTHON_VERSION}-venv \
-    python${PYTHON_VERSION}-dev \
-    python3-pip \
+    software-properties-common \
     postgresql \
     postgresql-contrib \
     libpq-dev \
@@ -77,9 +76,32 @@ apt install -y \
     nginx \
     supervisor
 
+# Check if Python 3.10+ is available, if not add deadsnakes PPA
+PYTHON_CMD=""
+if command -v python3.12 &> /dev/null; then
+    PYTHON_CMD="python3.12"
+elif command -v python3.11 &> /dev/null; then
+    PYTHON_CMD="python3.11"
+elif command -v python3.10 &> /dev/null; then
+    PYTHON_CMD="python3.10"
+else
+    echo -e "${YELLOW}Python 3.10+ not found. Adding deadsnakes PPA...${NC}"
+    add-apt-repository -y ppa:deadsnakes/ppa
+    apt update
+    apt install -y python3.11 python3.11-venv python3.11-dev
+    PYTHON_CMD="python3.11"
+fi
+
+# Install venv and dev packages for detected Python
+PYTHON_VERSION=$(${PYTHON_CMD} --version | cut -d' ' -f2 | cut -d'.' -f1,2)
+echo -e "${GREEN}Using Python ${PYTHON_VERSION}${NC}"
+
+# Try to install venv package (may already be included)
+apt install -y python3-pip python3-venv python3-dev 2>/dev/null || true
+
 # Create python symlink if not exists
 if ! command -v python &> /dev/null; then
-    ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python
+    ln -sf $(which ${PYTHON_CMD}) /usr/bin/python
 fi
 
 # ------------------------------------------------------------
@@ -132,8 +154,23 @@ echo -e "\n${YELLOW}[4/7] Setting up Python virtual environment...${NC}"
 
 cd ${PROJECT_DIR}
 
+# Detect Python command again (in case script is run in parts)
+if [ -z "$PYTHON_CMD" ]; then
+    if command -v python3.12 &> /dev/null; then
+        PYTHON_CMD="python3.12"
+    elif command -v python3.11 &> /dev/null; then
+        PYTHON_CMD="python3.11"
+    elif command -v python3.10 &> /dev/null; then
+        PYTHON_CMD="python3.10"
+    else
+        PYTHON_CMD="python3"
+    fi
+fi
+
+echo -e "Using: ${PYTHON_CMD} ($(${PYTHON_CMD} --version))"
+
 # Create virtual environment
-python${PYTHON_VERSION} -m venv .venv
+${PYTHON_CMD} -m venv .venv
 
 # Activate and upgrade pip
 source .venv/bin/activate
