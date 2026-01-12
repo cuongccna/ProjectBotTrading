@@ -193,6 +193,10 @@ echo -e "${GREEN}Python dependencies installed!${NC}"
 # ------------------------------------------------------------
 echo -e "\n${YELLOW}[6/7] Initializing database tables...${NC}"
 
+# Make sure we're in project directory and venv is activated
+cd ${PROJECT_DIR}
+source .venv/bin/activate
+
 # Create all tables
 python -c "
 from database.engine import get_engine, Base
