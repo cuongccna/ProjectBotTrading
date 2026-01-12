@@ -526,9 +526,30 @@ def wire_stage_handlers(orchestrator: Orchestrator) -> None:
     async def handle_notifications() -> Dict[str, Any]:
         """Send notifications."""
         notifier = orchestrator.registry.get_instance("telegram_notifier")
-        # In production: send summary, alerts
-        logger.info("Notifications sent")
-        return {"notifications_sent": 0}
+        notifications_sent = 0
+        
+        if notifier and hasattr(notifier, 'send_text'):
+            try:
+                # Send cycle completion summary
+                ingestion = orchestrator.registry.get_instance("data_ingestion")
+                if ingestion and hasattr(ingestion, '_last_result'):
+                    result = ingestion._last_result
+                    if result:
+                        summary = (
+                            f"📊 **Ingestion Cycle Complete**\n\n"
+                            f"🕐 Duration: {result.duration_seconds:.1f}s\n"
+                            f"📥 Fetched: {result.total_fetched}\n"
+                            f"💾 Stored: {result.total_stored}\n"
+                            f"❌ Errors: {result.total_errors}"
+                        )
+                        sent = await notifier.send_text(summary)
+                        if sent:
+                            notifications_sent += 1
+            except Exception as e:
+                logger.warning(f"Failed to send notification: {e}")
+        
+        logger.info(f"Notifications sent: {notifications_sent}")
+        return {"notifications_sent": notifications_sent}
     
     async def handle_persist_results() -> Dict[str, Any]:
         """Persist all results."""

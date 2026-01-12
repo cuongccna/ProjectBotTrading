@@ -18,6 +18,7 @@ PRINCIPLES:
 import asyncio
 import logging
 import html
+import os
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Dict, Any, Optional, List
@@ -286,14 +287,32 @@ class TelegramNotifier:
             rate_limiter: Optional rate limiter
             min_tier: Minimum alert tier to send
         """
-        self._bot_token = bot_token or ""
-        self._chat_ids = chat_ids or []
+        # Load from environment if not provided
+        self._bot_token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")
+        
+        # Handle chat_ids from env (can be comma-separated)
+        if chat_ids:
+            self._chat_ids = chat_ids
+        else:
+            env_chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+            env_alert_chat_id = os.getenv("TELEGRAM_ALERT_CHAT_ID", "")
+            self._chat_ids = []
+            if env_chat_id:
+                self._chat_ids.append(env_chat_id)
+            if env_alert_chat_id and env_alert_chat_id != env_chat_id:
+                self._chat_ids.append(env_alert_chat_id)
+        
         self._rate_limiter = rate_limiter or TelegramRateLimiter()
         self._min_tier = min_tier
         self._formatter = TelegramFormatter()
         
         self._session: Optional[aiohttp.ClientSession] = None
-        self._enabled = bool(bot_token and chat_ids)  # Only enabled if configured
+        self._enabled = bool(self._bot_token and self._chat_ids)  # Only enabled if configured
+        
+        if self._enabled:
+            logger.info(f"TelegramNotifier enabled with {len(self._chat_ids)} chat(s)")
+        else:
+            logger.warning("TelegramNotifier NOT configured - check TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
     
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create HTTP session."""
