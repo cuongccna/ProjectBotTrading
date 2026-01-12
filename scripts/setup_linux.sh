@@ -193,12 +193,18 @@ echo -e "${GREEN}Python dependencies installed!${NC}"
 # ------------------------------------------------------------
 echo -e "\n${YELLOW}[6/7] Initializing database tables...${NC}"
 
-# Make sure we're in project directory and venv is activated
+# Use full path to venv python
 cd ${PROJECT_DIR}
-source .venv/bin/activate
+VENV_PYTHON="${PROJECT_DIR}/.venv/bin/python"
 
-# Create all tables
-python -c "
+# Verify venv python exists
+if [ ! -f "$VENV_PYTHON" ]; then
+    echo -e "${RED}ERROR: Virtual environment not found at ${PROJECT_DIR}/.venv${NC}"
+    exit 1
+fi
+
+# Create all tables using venv python
+${VENV_PYTHON} -c "
 from database.engine import get_engine, Base
 from database.models import *
 from risk_committee.models import Base as CommitteeBase
