@@ -286,9 +286,9 @@ class RealIngestionModule:
             enabled_sources.append("CryptoNews")
             api_key = self._config.cryptonews_api_key or os.getenv("CRYPTO_NEWS_API_KEY")
             if not api_key:
-                errors.append(
-                    "CryptoNews: CRYPTO_NEWS_API_KEY is required but not found in environment. "
-                    "Disable cryptonews_enabled or set the API key."
+                warnings.append(
+                    "CryptoNews: CRYPTO_NEWS_API_KEY not found. CryptoNews collection disabled. "
+                    "Set CRYPTO_NEWS_API_KEY in environment or disable cryptonews_enabled."
                 )
             if not self._config.cryptonews_base_url:
                 errors.append("CryptoNews: base_url is not configured")
@@ -300,9 +300,9 @@ class RealIngestionModule:
             enabled_sources.append("CryptoPanic")
             api_key = self._config.cryptopanic_api_key or os.getenv("CRYPTOPANIC_API_KEY")
             if not api_key:
-                errors.append(
-                    "CryptoPanic: CRYPTOPANIC_API_KEY is required but not found in environment. "
-                    "Disable cryptopanic_enabled or set the API key."
+                warnings.append(
+                    "CryptoPanic: CRYPTOPANIC_API_KEY not found. CryptoPanic collection disabled. "
+                    "Set CRYPTOPANIC_API_KEY in environment or disable cryptopanic_enabled."
                 )
             if not self._config.cryptopanic_base_url:
                 errors.append("CryptoPanic: base_url is not configured")
