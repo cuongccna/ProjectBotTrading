@@ -21,11 +21,14 @@ import html
 import os
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, TYPE_CHECKING
 
 import aiohttp
 
 from ..models import Alert, AlertTier
+
+if TYPE_CHECKING:
+    from strategy_engine.types import StrategySignal, SignalBundle
 
 
 logger = logging.getLogger(__name__)
@@ -186,6 +189,154 @@ class TelegramFormatter:
             lines.append(f"🟡 Degraded: {degraded}")
         if unhealthy > 0:
             lines.append(f"🔴 Unhealthy: {unhealthy}")
+        
+        return "\n".join(lines)
+    
+    # --------------------------------------------------------
+    # STRATEGY SIGNAL FORMATTING
+    # --------------------------------------------------------
+    
+    # Direction icons
+    DIRECTION_ICONS = {
+        "LONG": "🟢 LONG",
+        "SHORT": "🔴 SHORT",
+        "NEUTRAL": "⚪ NEUTRAL",
+    }
+    
+    # Confidence level icons
+    CONFIDENCE_ICONS = {
+        "very_low": "⬜",
+        "low": "🟨",
+        "medium": "🟧",
+        "high": "🟩",
+        "very_high": "💎",
+    }
+    
+    @classmethod
+    def format_strategy_signal(cls, signal: "StrategySignal") -> str:
+        """
+        Format a StrategySignal for Telegram notification.
+        
+        Includes:
+        - Symbol and direction
+        - Confidence score with visual indicator
+        - Market context summary from supporting_features
+        """
+        # Direction with icon
+        direction_str = cls.DIRECTION_ICONS.get(
+            signal.direction.value, f"❓ {signal.direction.value}"
+        )
+        
+        # Confidence bar (visual representation)
+        conf_pct = int(signal.confidence_score * 100)
+        filled = int(signal.confidence_score * 10)
+        conf_bar = "▓" * filled + "░" * (10 - filled)
+        
+        # Confidence level icon
+        conf_level_name = signal.confidence_level.name.lower() if hasattr(signal.confidence_level, 'name') else "medium"
+        conf_icon = cls.CONFIDENCE_ICONS.get(conf_level_name, "🟨")
+        
+        # Header
+        lines = [
+            f"📊 <b>Strategy Signal</b>",
+            "",
+            f"<b>{html.escape(signal.symbol)}</b> ({signal.timeframe})",
+            f"Direction: {direction_str}",
+            f"Signal Type: <code>{signal.signal_type.value}</code>",
+            "",
+            f"{conf_icon} Confidence: <b>{conf_pct}%</b>",
+            f"<code>[{conf_bar}]</code>",
+            "",
+        ]
+        
+        # Market context summary from supporting_features
+        features = signal.supporting_features or {}
+        if features:
+            lines.append("<b>📈 Market Context:</b>")
+            
+            # Trend
+            trend = features.get("trend_state", "unknown")
+            trend_icon = "📈" if "up" in str(trend).lower() else "📉" if "down" in str(trend).lower() else "➡️"
+            lines.append(f"{trend_icon} Trend: <code>{html.escape(str(trend))}</code>")
+            
+            # Volatility
+            volatility = features.get("volatility_level", "unknown")
+            vol_raw = features.get("volatility_raw")
+            vol_str = f"{volatility}"
+            if vol_raw is not None:
+                vol_str += f" ({vol_raw:.2%})" if isinstance(vol_raw, (int, float)) else ""
+            lines.append(f"📊 Volatility: <code>{html.escape(vol_str)}</code>")
+            
+            # Liquidity
+            liquidity = features.get("liquidity_score")
+            liq_grade = features.get("liquidity_grade", "unknown")
+            if liquidity is not None:
+                liq_str = f"{liq_grade} ({liquidity:.0%})" if isinstance(liquidity, (int, float)) else str(liq_grade)
+            else:
+                liq_str = str(liq_grade)
+            lines.append(f"💧 Liquidity: <code>{html.escape(liq_str)}</code>")
+            
+            # Price change if available
+            price_change = features.get("price_change_pct")
+            if price_change is not None and isinstance(price_change, (int, float)):
+                change_icon = "🔺" if price_change > 0 else "🔻" if price_change < 0 else "➖"
+                lines.append(f"{change_icon} Price Change: <code>{price_change:+.2%}</code>")
+            
+            lines.append("")
+        
+        # Reason/explanation
+        if signal.explanation:
+            # Truncate long explanations
+            explanation = signal.explanation
+            if len(explanation) > 150:
+                explanation = explanation[:147] + "..."
+            lines.append(f"💡 <i>{html.escape(explanation)}</i>")
+            lines.append("")
+        
+        # Timestamp
+        time_str = signal.generated_at.strftime("%Y-%m-%d %H:%M:%S UTC") if signal.generated_at else "N/A"
+        lines.append(f"🕐 {time_str}")
+        
+        return "\n".join(lines)
+    
+    @classmethod
+    def format_signal_bundle_summary(
+        cls,
+        signals: List["StrategySignal"],
+        title: str = "Strategy Signals",
+    ) -> str:
+        """
+        Format a summary of multiple actionable signals.
+        
+        Only includes actionable signals.
+        """
+        actionable = [s for s in signals if s.is_actionable]
+        
+        if not actionable:
+            return "✅ No actionable signals at this time."
+        
+        # Sort by confidence
+        actionable.sort(key=lambda s: s.confidence_score, reverse=True)
+        
+        lines = [
+            f"📊 <b>{html.escape(title)}</b>",
+            f"<i>{len(actionable)} actionable signal(s)</i>",
+            "",
+        ]
+        
+        for sig in actionable[:5]:  # Limit to top 5
+            direction_str = cls.DIRECTION_ICONS.get(
+                sig.direction.value, sig.direction.value
+            )
+            conf_pct = int(sig.confidence_score * 100)
+            
+            lines.append(
+                f"<b>{sig.symbol}</b> {direction_str} "
+                f"<code>{sig.signal_type.value}</code> ({conf_pct}%)"
+            )
+        
+        if len(actionable) > 5:
+            lines.append(f"<i>... and {len(actionable) - 5} more</i>")
         
         return "\n".join(lines)
 
@@ -376,6 +527,110 @@ class TelegramNotifier:
             return False
         
         return await self._send_to_all(html.escape(text))
+    
+    # --------------------------------------------------------
+    # STRATEGY SIGNAL ALERTS
+    # --------------------------------------------------------
+    
+    async def send_strategy_signal(
+        self,
+        signal: "StrategySignal",
+    ) -> bool:
+        """
+        Send alert for a single actionable strategy signal.
+        
+        Only sends if the signal is actionable (has direction,
+        sufficient confidence, and valid signal type).
+        
+        Args:
+            signal: StrategySignal from StrategyEngine
+            
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        if not self._enabled:
+            return False
+        
+        # Only send for actionable signals
+        if not signal.is_actionable:
+            logger.debug(
+                f"Signal for {signal.symbol} not actionable, skipping notification"
+            )
+            return False
+        
+        message = self._formatter.format_strategy_signal(signal)
+        return await self._send_to_all(message)
+    
+    async def send_actionable_signals(
+        self,
+        signals: List["StrategySignal"],
+        send_individual: bool = False,
+        send_summary: bool = True,
+    ) -> bool:
+        """
+        Send alerts for actionable signals from a bundle.
+        
+        By default sends a summary. Can optionally send
+        individual alerts for each actionable signal.
+        
+        Args:
+            signals: List of StrategySignal objects
+            send_individual: If True, send individual alert per signal
+            send_summary: If True, send a summary of all actionable signals
+            
+        Returns:
+            True if any message sent successfully
+        """
+        if not self._enabled:
+            return False
+        
+        # Filter to actionable only
+        actionable = [s for s in signals if s.is_actionable]
+        
+        if not actionable:
+            logger.debug("No actionable signals to notify")
+            return False
+        
+        success = False
+        
+        # Send individual alerts if requested
+        if send_individual:
+            for sig in actionable:
+                if await self.send_strategy_signal(sig):
+                    success = True
+        
+        # Send summary
+        if send_summary:
+            message = self._formatter.format_signal_bundle_summary(actionable)
+            if await self._send_to_all(message):
+                success = True
+        
+        return success
+    
+    async def send_signal_bundle(
+        self,
+        bundle: "SignalBundle",
+        send_individual: bool = False,
+        send_summary: bool = True,
+    ) -> bool:
+        """
+        Send alerts for actionable signals from a SignalBundle.
+        
+        Convenience method that extracts signals from bundle.
+        
+        Args:
+            bundle: SignalBundle from StrategyEngine
+            send_individual: If True, send individual alert per signal
+            send_summary: If True, send a summary of all actionable signals
+            
+        Returns:
+            True if any message sent successfully
+        """
+        return await self.send_actionable_signals(
+            bundle.signals,
+            send_individual=send_individual,
+            send_summary=send_summary,
+        )
     
     async def _send_to_all(self, message: str) -> bool:
         """Send message to all configured chats."""

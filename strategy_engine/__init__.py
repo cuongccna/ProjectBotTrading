@@ -170,6 +170,9 @@ from .types import (
     ConfidenceLevel,
     SignalStrength,
     
+    # Outcome tracking
+    SignalOutcome,
+    
     # Regimes
     MarketRegime,
     VolatilityRegime,
@@ -178,6 +181,12 @@ from .types import (
     IntentStatus,
     NoTradeReason,
     StrategyReasonCode,
+    
+    # Signal types (NEW)
+    SignalType,
+    SignalTier,
+    StrategySignal,
+    SignalBundle,
     
     # Input Types
     MarketStructureInput,
@@ -259,6 +268,18 @@ from .repository import (
     StrategyEngineRepository,
 )
 
+# ============================================================
+# OUTCOME TRACKER EXPORTS
+# ============================================================
+
+from .outcome_tracker import (
+    OutcomeEvaluationConfig,
+    evaluate_pending_signals,
+    get_outcome_stats,
+    get_signals_by_outcome,
+    get_accuracy_by_tier,
+)
+
 
 # ============================================================
 # ALL EXPORTS
@@ -269,11 +290,18 @@ __all__ = [
     "TradeDirection",
     "ConfidenceLevel",
     "SignalStrength",
+    "SignalOutcome",
     "MarketRegime",
     "VolatilityRegime",
     "IntentStatus",
     "NoTradeReason",
     "StrategyReasonCode",
+    # Signal types (NEW)
+    "SignalType",
+    "SignalTier",
+    "StrategySignal",
+    "SignalBundle",
+    # Input types
     "MarketStructureInput",
     "VolumeFlowInput",
     "SentimentInput",
@@ -317,6 +345,13 @@ __all__ = [
     
     # Repository
     "StrategyEngineRepository",
+    
+    # Outcome Tracker
+    "OutcomeEvaluationConfig",
+    "evaluate_pending_signals",
+    "get_outcome_stats",
+    "get_signals_by_outcome",
+    "get_accuracy_by_tier",
 ]
 
 

@@ -265,6 +265,14 @@ class TradeIntentRecord(Base):
         comment="Evaluation ID for tracing",
     )
     
+    # Signal tier classification
+    tier: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="informational",
+        comment="Signal tier: informational, actionable, premium",
+    )
+    
     # Indexes
     __table_args__ = (
         Index("ix_trade_intents_symbol", "symbol"),
@@ -272,6 +280,8 @@ class TradeIntentRecord(Base):
         Index("ix_trade_intents_direction", "direction"),
         Index("ix_trade_intents_status", "status"),
         Index("ix_trade_intents_reason_code", "reason_code"),
+        Index("ix_trade_intents_tier", "tier"),
+        Index("ix_trade_intents_symbol_time_tier", "symbol", "intent_timestamp", "tier"),
     )
     
     def __repr__(self) -> str:
@@ -402,11 +412,21 @@ class NoTradeRecord(Base):
         nullable=True,
     )
     
+    # Signal tier classification (always INFORMATIONAL for no-trade)
+    tier: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="informational",
+        comment="Signal tier: always informational for NO_TRADE",
+    )
+    
     # Indexes
     __table_args__ = (
         Index("ix_no_trades_symbol", "symbol"),
         Index("ix_no_trades_timestamp", "evaluation_timestamp"),
         Index("ix_no_trades_reason", "reason"),
+        Index("ix_no_trades_tier", "tier"),
+        Index("ix_no_trades_symbol_time_tier", "symbol", "evaluation_timestamp", "tier"),
     )
     
     def __repr__(self) -> str:
@@ -534,12 +554,22 @@ class StrategyEvaluation(Base):
         default="1.0.0",
     )
     
+    # Signal tier classification
+    tier: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="informational",
+        comment="Signal tier: informational, actionable, premium",
+    )
+    
     # Indexes
     __table_args__ = (
         Index("ix_evaluations_symbol", "symbol"),
         Index("ix_evaluations_timestamp", "evaluation_timestamp"),
         Index("ix_evaluations_has_intent", "has_intent"),
         Index("ix_evaluations_evaluation_id", "evaluation_id"),
+        Index("ix_evaluations_tier", "tier"),
+        Index("ix_evaluations_symbol_time_tier", "symbol", "evaluation_timestamp", "tier"),
     )
     
     def __repr__(self) -> str:

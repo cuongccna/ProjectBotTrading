@@ -16,7 +16,7 @@ Every function:
 
 import logging
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -33,8 +33,12 @@ from .models import (
     PositionSizing,
     ExecutionRecord,
     SystemMonitoring,
+    StrategySignalRecord,
 )
 from .engine import DatabasePersistenceError, PersistenceValidationError
+
+if TYPE_CHECKING:
+    from strategy_engine.types import StrategySignal
 
 logger = logging.getLogger(__name__)
 
@@ -811,6 +815,184 @@ def persist_system_monitoring_batch(
 
 
 # =============================================================
+# 13. STRATEGY SIGNAL PERSISTENCE
+# =============================================================
+
+def persist_strategy_signal(
+    session: Session,
+    signal: "StrategySignal",
+) -> str:
+    """
+    Persist a single StrategySignal with its tier classification.
+    
+    Args:
+        session: Database session
+        signal: StrategySignal from StrategyEngine
+        
+    Returns:
+        signal_id of persisted record
+        
+    Raises:
+        DatabasePersistenceError on failure
+    """
+    from strategy_engine.types import StrategySignal  # Import here to avoid circular
+    
+    try:
+        record = StrategySignalRecord(
+            signal_id=signal.signal_id,
+            signal_type=signal.signal_type.value,
+            direction=signal.direction.value,
+            confidence_score=signal.confidence_score,
+            confidence_level=signal.confidence_level.name,
+            tier=signal.tier.value,  # Tier classification
+            symbol=signal.symbol,
+            timeframe=signal.timeframe,
+            exchange=signal.exchange,
+            supporting_features=signal.supporting_features,
+            reason_code=signal.reason_code.value if signal.reason_code else None,
+            explanation=signal.explanation,
+            source_state_id=signal.source_state_id,
+            is_actionable=signal.is_actionable,
+            requires_attention=signal.tier.requires_attention,
+            generated_at=signal.generated_at,
+            expires_at=signal.expires_at,
+            engine_version=signal.engine_version,
+        )
+        
+        session.add(record)
+        session.flush()
+        
+        _log_persistence("strategy_signals", 1, f"tier={signal.tier.value}")
+        return signal.signal_id
+        
+    except SQLAlchemyError as e:
+        logger.error(f"Failed to persist strategy_signal: {e}")
+        raise DatabasePersistenceError(f"strategy_signal persistence failed: {e}") from e
+
+
+def persist_strategy_signals_batch(
+    session: Session,
+    signals: List["StrategySignal"],
+) -> int:
+    """
+    Persist multiple StrategySignals with tier classification.
+    
+    Args:
+        session: Database session
+        signals: List of StrategySignal objects
+        
+    Returns:
+        Number of signals persisted
+        
+    Raises:
+        DatabasePersistenceError on failure
+    """
+    from strategy_engine.types import StrategySignal  # Import here to avoid circular
+    
+    if not signals:
+        _log_zero_records("strategy_signals", "empty input", "strategy")
+        return 0
+    
+    try:
+        records = []
+        tier_counts = {"informational": 0, "actionable": 0, "premium": 0}
+        
+        for signal in signals:
+            tier_value = signal.tier.value
+            tier_counts[tier_value] = tier_counts.get(tier_value, 0) + 1
+            
+            record = StrategySignalRecord(
+                signal_id=signal.signal_id,
+                signal_type=signal.signal_type.value,
+                direction=signal.direction.value,
+                confidence_score=signal.confidence_score,
+                confidence_level=signal.confidence_level.name,
+                tier=tier_value,
+                symbol=signal.symbol,
+                timeframe=signal.timeframe,
+                exchange=signal.exchange,
+                supporting_features=signal.supporting_features,
+                reason_code=signal.reason_code.value if signal.reason_code else None,
+                explanation=signal.explanation,
+                source_state_id=signal.source_state_id,
+                is_actionable=signal.is_actionable,
+                requires_attention=signal.tier.requires_attention,
+                generated_at=signal.generated_at,
+                expires_at=signal.expires_at,
+                engine_version=signal.engine_version,
+            )
+            records.append(record)
+        
+        session.bulk_save_objects(records)
+        session.flush()
+        
+        tier_summary = ", ".join(f"{k}={v}" for k, v in tier_counts.items() if v > 0)
+        _log_persistence("strategy_signals", len(records), tier_summary)
+        return len(records)
+        
+    except SQLAlchemyError as e:
+        logger.error(f"Failed to persist strategy_signals batch: {e}")
+        raise DatabasePersistenceError(f"strategy_signals batch persistence failed: {e}") from e
+
+
+def get_signals_by_tier(
+    session: Session,
+    tier: str,
+    symbol: Optional[str] = None,
+    limit: int = 100,
+) -> List[StrategySignalRecord]:
+    """
+    Retrieve signals by tier classification.
+    
+    Args:
+        session: Database session
+        tier: Tier value (informational, actionable, premium)
+        symbol: Optional symbol filter
+        limit: Max records to return
+        
+    Returns:
+        List of StrategySignalRecord objects
+    """
+    query = session.query(StrategySignalRecord).filter(
+        StrategySignalRecord.tier == tier
+    )
+    
+    if symbol:
+        query = query.filter(StrategySignalRecord.symbol == symbol)
+    
+    return query.order_by(StrategySignalRecord.generated_at.desc()).limit(limit).all()
+
+
+def get_latest_signals(
+    session: Session,
+    symbol: Optional[str] = None,
+    actionable_only: bool = False,
+    limit: int = 50,
+) -> List[StrategySignalRecord]:
+    """
+    Retrieve latest signals.
+    
+    Args:
+        session: Database session
+        symbol: Optional symbol filter
+        actionable_only: If True, only return actionable signals
+        limit: Max records to return
+        
+    Returns:
+        List of StrategySignalRecord objects
+    """
+    query = session.query(StrategySignalRecord)
+    
+    if symbol:
+        query = query.filter(StrategySignalRecord.symbol == symbol)
+    
+    if actionable_only:
+        query = query.filter(StrategySignalRecord.is_actionable == True)
+    
+    return query.order_by(StrategySignalRecord.generated_at.desc()).limit(limit).all()
+
+
+# =============================================================
 # EXPORTS
 # =============================================================
 
@@ -828,4 +1010,9 @@ __all__ = [
     "persist_execution_record",
     "persist_system_monitoring",
     "persist_system_monitoring_batch",
+    # Strategy signals
+    "persist_strategy_signal",
+    "persist_strategy_signals_batch",
+    "get_signals_by_tier",
+    "get_latest_signals",
 ]

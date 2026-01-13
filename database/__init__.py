@@ -64,6 +64,7 @@ from .models import (
     SentimentScore,
     MarketData,
     OnchainFlowRaw,
+    ExchangeFlowAggregate,
     FlowScore,
     
     # State assessment
@@ -77,6 +78,13 @@ from .models import (
     
     # Monitoring
     SystemMonitoring,
+    
+    # Processed data
+    ProcessedMarketData,
+    ProcessedMarketStateRecord,
+    
+    # Strategy signals
+    StrategySignalRecord,
 )
 
 # Individual persistence functions
@@ -94,6 +102,11 @@ from .persistence import (
     persist_execution_record,
     persist_system_monitoring,
     persist_system_monitoring_batch,
+    # Strategy signals
+    persist_strategy_signal,
+    persist_strategy_signals_batch,
+    get_signals_by_tier,
+    get_latest_signals,
 )
 
 # Pipeline-level persistence
@@ -149,6 +162,7 @@ __all__ = [
     "SentimentScore",
     "MarketData",
     "OnchainFlowRaw",
+    "ExchangeFlowAggregate",
     "FlowScore",
     "MarketState",
     "RiskState",
@@ -156,6 +170,9 @@ __all__ = [
     "PositionSizing",
     "ExecutionRecord",
     "SystemMonitoring",
+    "ProcessedMarketData",
+    "ProcessedMarketStateRecord",
+    "StrategySignalRecord",
     
     # Individual persistence
     "persist_raw_news",
@@ -171,6 +188,10 @@ __all__ = [
     "persist_execution_record",
     "persist_system_monitoring",
     "persist_system_monitoring_batch",
+    "persist_strategy_signal",
+    "persist_strategy_signals_batch",
+    "get_signals_by_tier",
+    "get_latest_signals",
     
     # Pipeline persistence
     "PipelineCycleData",

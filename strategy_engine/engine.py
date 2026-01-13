@@ -54,8 +54,8 @@ USAGE
 ============================================================
 """
 
-from datetime import datetime, timedelta
-from typing import Optional, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import Optional, Tuple, List, Dict, Any
 from uuid import uuid4
 import time
 
@@ -75,12 +75,24 @@ from .types import (
     MarketRegime,
     InsufficientDataError,
     StrategyEngineError,
+    # New signal types
+    SignalType,
+    StrategySignal,
+    SignalBundle,
 )
 from .config import StrategyEngineConfig
 from .signals import (
     MarketStructureSignalGenerator,
     VolumeFlowSignalGenerator,
     SentimentModifierGenerator,
+)
+
+# Import ProcessedMarketState for typed signals
+from data_processing.contracts import (
+    ProcessedMarketState,
+    ProcessedMarketStateBundle,
+    TrendState,
+    VolatilityLevel,
 )
 
 
@@ -619,6 +631,351 @@ class StrategyEngine:
     def get_config(self) -> StrategyEngineConfig:
         """Return the current engine configuration."""
         return self.config
+    
+    # ============================================================
+    # SIGNAL GENERATION FROM PROCESSED MARKET STATE
+    # ============================================================
+    
+    def generate_signal(
+        self,
+        market_state: ProcessedMarketState,
+        risk_allows_trading: bool = True,
+    ) -> StrategySignal:
+        """
+        Generate a trading signal from ProcessedMarketState.
+        
+        ============================================================
+        PURPOSE
+        ============================================================
+        This is the primary method for generating signals from the
+        canonical ProcessedMarketState contract. It does NOT:
+        - Execute trades
+        - Bypass risk controls
+        - Read from raw MarketData
+        
+        ============================================================
+        PROCESS
+        ============================================================
+        1. Validate market state
+        2. Check risk constraints (respects risk module decision)
+        3. Classify signal type from trend/volatility
+        4. Determine direction
+        5. Calculate confidence score
+        6. Package supporting features
+        
+        Args:
+            market_state: Processed market state from ProcessingPipelineModule
+            risk_allows_trading: Whether risk module allows trading
+                                 (MUST be checked by caller, not bypassed)
+        
+        Returns:
+            StrategySignal with signal_type, direction, confidence_score,
+            and supporting_features
+        """
+        start_time = time.time()
+        
+        # --------------------------------------------------
+        # Step 1: Validate market state
+        # --------------------------------------------------
+        if market_state is None:
+            return StrategySignal.no_signal(
+                reason="Market state is None - cannot generate signal"
+            )
+        
+        symbol = market_state.symbol
+        timeframe = market_state.timeframe
+        exchange = market_state.exchange
+        
+        # --------------------------------------------------
+        # Step 2: Check risk constraints (NEVER bypass)
+        # --------------------------------------------------
+        if not risk_allows_trading:
+            return StrategySignal(
+                signal_type=SignalType.NONE,
+                direction=TradeDirection.NEUTRAL,
+                confidence_score=0.0,
+                symbol=symbol,
+                timeframe=timeframe,
+                exchange=exchange,
+                explanation="Risk module does not allow trading",
+                source_state_id=str(market_state.state_id),
+            )
+        
+        # --------------------------------------------------
+        # Step 3: Check if state is tradeable
+        # --------------------------------------------------
+        if not market_state.is_tradeable:
+            return StrategySignal(
+                signal_type=SignalType.NONE,
+                direction=TradeDirection.NEUTRAL,
+                confidence_score=0.0,
+                symbol=symbol,
+                timeframe=timeframe,
+                exchange=exchange,
+                explanation=f"Market state not tradeable: "
+                           f"volatility={market_state.volatility_level.value}, "
+                           f"liquidity={market_state.liquidity_grade.value}",
+                source_state_id=str(market_state.state_id),
+            )
+        
+        # --------------------------------------------------
+        # Step 4: Classify signal type from trend/volatility
+        # --------------------------------------------------
+        signal_type, reason_code = self._classify_signal_type(market_state)
+        
+        # --------------------------------------------------
+        # Step 5: Determine direction
+        # --------------------------------------------------
+        direction = self._determine_direction_from_state(market_state)
+        
+        # --------------------------------------------------
+        # Step 6: Calculate confidence score
+        # --------------------------------------------------
+        confidence_score = self._calculate_confidence_from_state(market_state)
+        
+        # --------------------------------------------------
+        # Step 7: Build supporting features
+        # --------------------------------------------------
+        supporting_features = self._build_supporting_features(market_state)
+        
+        # --------------------------------------------------
+        # Step 8: Build explanation
+        # --------------------------------------------------
+        explanation = self._build_signal_explanation(
+            market_state=market_state,
+            signal_type=signal_type,
+            direction=direction,
+            confidence_score=confidence_score,
+        )
+        
+        # --------------------------------------------------
+        # Step 9: Build and return signal
+        # --------------------------------------------------
+        signal = StrategySignal(
+            signal_type=signal_type,
+            direction=direction,
+            confidence_score=confidence_score,
+            confidence_level=ConfidenceLevel.from_score(confidence_score),
+            symbol=symbol,
+            timeframe=timeframe,
+            exchange=exchange,
+            supporting_features=supporting_features,
+            reason_code=reason_code,
+            explanation=explanation,
+            source_state_id=str(market_state.state_id),
+            generated_at=datetime.now(timezone.utc),
+            expires_at=datetime.now(timezone.utc) + timedelta(
+                minutes=self.config.lifecycle.default_expiration_minutes
+            ),
+            engine_version=self.config.engine_version,
+        )
+        
+        return signal
+    
+    def generate_signals_from_bundle(
+        self,
+        state_bundle: ProcessedMarketStateBundle,
+        risk_allows_trading: bool = True,
+    ) -> SignalBundle:
+        """
+        Generate signals for multiple symbols from a state bundle.
+        
+        Args:
+            state_bundle: Bundle of processed market states
+            risk_allows_trading: Whether risk module allows trading
+        
+        Returns:
+            SignalBundle with signals for all states in bundle
+        """
+        start_time = time.time()
+        evaluation_id = str(uuid4())[:8]
+        
+        signals: List[StrategySignal] = []
+        symbols_evaluated: List[str] = []
+        timeframes_evaluated: List[str] = []
+        
+        for key, state in state_bundle.states.items():
+            signal = self.generate_signal(
+                market_state=state,
+                risk_allows_trading=risk_allows_trading,
+            )
+            signals.append(signal)
+            
+            if state.symbol not in symbols_evaluated:
+                symbols_evaluated.append(state.symbol)
+            if state.timeframe not in timeframes_evaluated:
+                timeframes_evaluated.append(state.timeframe)
+        
+        duration_ms = (time.time() - start_time) * 1000
+        
+        return SignalBundle(
+            signals=signals,
+            evaluation_id=evaluation_id,
+            timestamp=datetime.now(timezone.utc),
+            symbols_evaluated=symbols_evaluated,
+            timeframes_evaluated=timeframes_evaluated,
+            evaluation_duration_ms=duration_ms,
+        )
+    
+    def _classify_signal_type(
+        self,
+        state: ProcessedMarketState,
+    ) -> Tuple[SignalType, Optional[StrategyReasonCode]]:
+        """
+        Classify the signal type based on market state.
+        
+        Returns (SignalType, StrategyReasonCode)
+        """
+        trend = state.trend_state
+        volatility = state.volatility_level
+        
+        # Strong trends -> Trend following
+        if trend == TrendState.STRONG_UPTREND:
+            return SignalType.TREND_FOLLOWING, StrategyReasonCode.TREND_CONTINUATION_LONG
+        elif trend == TrendState.STRONG_DOWNTREND:
+            return SignalType.TREND_FOLLOWING, StrategyReasonCode.TREND_CONTINUATION_SHORT
+        
+        # Normal trends
+        if trend == TrendState.UPTREND:
+            return SignalType.MOMENTUM, StrategyReasonCode.TREND_CONTINUATION_LONG
+        elif trend == TrendState.DOWNTREND:
+            return SignalType.MOMENTUM, StrategyReasonCode.TREND_CONTINUATION_SHORT
+        
+        # Ranging -> Mean reversion
+        if trend == TrendState.RANGING:
+            return SignalType.MEAN_REVERSION, None
+        
+        # High/extreme volatility -> Volatility signals
+        if volatility in (VolatilityLevel.HIGH, VolatilityLevel.EXTREME):
+            return SignalType.VOLATILITY_EXPANSION, None
+        
+        # Default: No clear signal type
+        return SignalType.NONE, None
+    
+    def _determine_direction_from_state(
+        self,
+        state: ProcessedMarketState,
+    ) -> TradeDirection:
+        """
+        Determine trade direction from market state.
+        """
+        trend = state.trend_state
+        
+        if trend.is_bullish:
+            return TradeDirection.LONG
+        elif trend.is_bearish:
+            return TradeDirection.SHORT
+        else:
+            return TradeDirection.NEUTRAL
+    
+    def _calculate_confidence_from_state(
+        self,
+        state: ProcessedMarketState,
+    ) -> float:
+        """
+        Calculate confidence score from market state.
+        
+        Factors:
+        - Trend strength
+        - Volatility level (extreme reduces confidence)
+        - Liquidity score
+        - Data quality
+        
+        Returns: 0.0 to 1.0
+        """
+        base_confidence = 0.5
+        
+        # Trend contribution (0 to +0.3)
+        trend_contrib = 0.0
+        if state.trend_state in (TrendState.STRONG_UPTREND, TrendState.STRONG_DOWNTREND):
+            trend_contrib = 0.3
+        elif state.trend_state in (TrendState.UPTREND, TrendState.DOWNTREND):
+            trend_contrib = 0.15
+        
+        # Trend strength contribution (0 to +0.1)
+        strength_contrib = (state.trend_strength or 0.0) * 0.1
+        
+        # Volatility adjustment (-0.2 to 0)
+        vol_adjustment = state.volatility_level.confidence_adjustment - 1.0
+        vol_adjustment = max(-0.2, vol_adjustment)
+        
+        # Liquidity contribution (0 to +0.15)
+        liq_contrib = state.liquidity_score * 0.15
+        
+        # Data quality contribution (0 to +0.05)
+        quality_contrib = (state.data_quality_score or 0.5) * 0.05
+        
+        # Neutral trend reduces to near zero
+        if state.trend_state.is_neutral:
+            return max(0.0, 0.1 + quality_contrib)
+        
+        total = base_confidence + trend_contrib + strength_contrib + vol_adjustment + liq_contrib + quality_contrib
+        
+        return max(0.0, min(1.0, total))
+    
+    def _build_supporting_features(
+        self,
+        state: ProcessedMarketState,
+    ) -> Dict[str, Any]:
+        """
+        Build supporting features dictionary for transparency.
+        """
+        return {
+            # Trend features
+            "trend_state": state.trend_state.value,
+            "trend_direction_numeric": state.trend_direction_numeric,
+            "trend_strength": state.trend_strength,
+            
+            # Volatility features
+            "volatility_level": state.volatility_level.value,
+            "volatility_raw": state.volatility_raw,
+            "volatility_percentile": state.volatility_percentile,
+            "volatility_risk_multiplier": state.volatility_level.risk_multiplier,
+            
+            # Liquidity features
+            "liquidity_score": state.liquidity_score,
+            "liquidity_grade": state.liquidity_grade.value,
+            
+            # Price features
+            "current_price": state.current_price,
+            "price_change_pct": state.price_change_pct,
+            
+            # Volume features
+            "volume_ratio": state.volume_ratio,
+            
+            # Quality
+            "data_quality_score": state.data_quality_score,
+            "is_tradeable": state.is_tradeable,
+            "risk_score_hint": state.risk_score_hint,
+        }
+    
+    def _build_signal_explanation(
+        self,
+        market_state: ProcessedMarketState,
+        signal_type: SignalType,
+        direction: TradeDirection,
+        confidence_score: float,
+    ) -> str:
+        """
+        Build human-readable explanation for the signal.
+        """
+        if direction == TradeDirection.NEUTRAL:
+            return (
+                f"{market_state.symbol} {market_state.timeframe}: "
+                f"No directional signal - trend={market_state.trend_state.value}, "
+                f"volatility={market_state.volatility_level.value}"
+            )
+        
+        dir_str = "bullish" if direction == TradeDirection.LONG else "bearish"
+        conf_str = ConfidenceLevel.from_score(confidence_score).name.lower()
+        
+        return (
+            f"{market_state.symbol} {market_state.timeframe}: "
+            f"{signal_type.value} signal - {dir_str} with {conf_str} confidence. "
+            f"Trend={market_state.trend_state.value}, "
+            f"volatility={market_state.volatility_level.value}, "
+            f"liquidity={market_state.liquidity_grade.value}"
+        )
 
 
 # ============================================================

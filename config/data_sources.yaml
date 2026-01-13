@@ -5,6 +5,9 @@
 # This file configures all external data sources.
 # Each source must have: name, type, priority, health check.
 #
+# Schema versioning: Increment schema_version when expected_fields change.
+# Backward compatibility: All new fields are optional with defaults.
+#
 # ============================================================
 
 # ------------------------------------------------------------
@@ -18,6 +21,24 @@ news_sources:
     base_url: "https://cryptonews-api.com/api/v1"
     # API key from environment: CRYPTO_NEWS_API_KEY
     
+    # Schema definition (non-breaking addition)
+    schema_version: "1.0.0"
+    expected_fields:
+      required:
+        - "title"
+        - "news_url"
+        - "date"
+      optional:
+        - "text"
+        - "source_name"
+        - "tickers"
+        - "type"
+        - "sentiment"
+    
+    # Data lifecycle
+    data_ttl_seconds: 86400  # 24 hours - news becomes stale
+    reliability_weight: 0.6   # From smart_money_confidence.yaml
+    
     polling:
       interval_seconds: 60
       batch_size: 50
@@ -29,9 +50,41 @@ news_sources:
       endpoint: "/health"
       timeout_seconds: 10
       
-    # TODO: Define response schema validation
+  cryptopanic:
+    enabled: true
+    name: "CryptoPanic"
+    type: "rest"
+    base_url: "https://cryptopanic.com/api/v1"
+    # API key from environment: CRYPTOPANIC_API_KEY
     
-  # TODO: Add additional news sources
+    # Schema definition
+    schema_version: "1.0.0"
+    expected_fields:
+      required:
+        - "id"
+        - "title"
+        - "published_at"
+      optional:
+        - "url"
+        - "source"
+        - "currencies"
+        - "votes"
+        - "kind"
+    
+    # Data lifecycle
+    data_ttl_seconds: 86400  # 24 hours
+    reliability_weight: 0.6   # Community curated
+    
+    polling:
+      interval_seconds: 60
+      batch_size: 50
+      
+    rate_limits:
+      requests_per_minute: 100  # Free tier
+      
+    health_check:
+      endpoint: "/posts/"
+      timeout_seconds: 10
 
 # ------------------------------------------------------------
 # Market Data Sources
@@ -44,6 +97,26 @@ market_data:
     base_url: "https://api.coingecko.com/api/v3"
     # API key from environment: COINGECKO_API_KEY (optional)
     
+    # Schema definition
+    schema_version: "1.0.0"
+    expected_fields:
+      required:
+        - "id"
+        - "symbol"
+        - "current_price"
+      optional:
+        - "market_cap"
+        - "total_volume"
+        - "price_change_24h"
+        - "price_change_percentage_24h"
+        - "high_24h"
+        - "low_24h"
+        - "last_updated"
+    
+    # Data lifecycle
+    data_ttl_seconds: 300  # 5 minutes - price data stale quickly
+    reliability_weight: 0.7  # Aggregated from multiple exchanges
+    
     polling:
       interval_seconds: 60
       
@@ -54,11 +127,63 @@ market_data:
       endpoint: "/ping"
       timeout_seconds: 10
       
+  binance:
+    enabled: true
+    name: "Binance"
+    type: "rest"
+    base_url: "https://fapi.binance.com"
+    spot_url: "https://api.binance.com"
+    
+    # Schema definition
+    schema_version: "1.0.0"
+    expected_fields:
+      required:
+        - "open"
+        - "high"
+        - "low"
+        - "close"
+        - "volume"
+      optional:
+        - "quote_volume"
+        - "trade_count"
+        - "open_time"
+        - "close_time"
+    
+    # Data lifecycle
+    data_ttl_seconds: 60  # 1 minute - real-time data
+    reliability_weight: 0.95  # Direct exchange data
+    
+    polling:
+      interval_seconds: 60
+      
+    rate_limits:
+      requests_per_minute: 1200  # Binance limit
+      
+    health_check:
+      endpoint: "/fapi/v1/ping"
+      timeout_seconds: 10
+      
   exchange_websocket:
     enabled: false
     name: "ExchangeWebSocket"
     type: "websocket"
     # TODO: DECISION POINT - Define exchange WebSocket configuration
+    
+    # Schema definition
+    schema_version: "1.0.0"
+    expected_fields:
+      required:
+        - "price"
+        - "symbol"
+        - "timestamp"
+      optional:
+        - "volume"
+        - "bid"
+        - "ask"
+    
+    # Data lifecycle
+    data_ttl_seconds: 5  # Real-time streaming
+    reliability_weight: 0.98  # Direct feed
     
     reconnection:
       max_attempts: 10
@@ -71,16 +196,159 @@ market_data:
 # On-Chain Data Sources
 # ------------------------------------------------------------
 onchain_sources:
-  # Free on-chain data sources
-  # TODO: DECISION POINT - Which on-chain data providers to use?
+  whale_alert:
+    enabled: true
+    name: "WhaleAlert"
+    type: "rest"
+    base_url: "https://api.whale-alert.io/v1"
+    # API key from environment: WHALE_ALERT_API_KEY
+    
+    # Schema definition
+    schema_version: "1.0.0"
+    expected_fields:
+      required:
+        - "blockchain"
+        - "symbol"
+        - "amount"
+        - "amount_usd"
+        - "timestamp"
+        - "hash"
+      optional:
+        - "from"
+        - "to"
+        - "transaction_type"
+        - "transaction_count"
+    
+    # Data lifecycle
+    data_ttl_seconds: 3600  # 1 hour - whale transactions
+    reliability_weight: 0.90  # Verified transaction data
+    
+    # Configuration
+    settings:
+      min_value_usd: 500000  # Free tier minimum
+      lookback_seconds: 3600  # 1 hour lookback
+      currencies:
+        - "btc"
+        - "eth"
+        - "usdt"
+        - "usdc"
+    
+    polling:
+      interval_seconds: 300  # 5 minutes (rate limit: 10 req/min)
+      
+    rate_limits:
+      requests_per_minute: 10  # Free tier limit
+      
+    health_check:
+      endpoint: "/status"
+      timeout_seconds: 10
   
+  # Nansen Smart Money API (PREMIUM - Requires paid subscription)
+  nansen:
+    enabled: false  # Disabled by default - requires paid Nansen subscription
+    name: "Nansen"
+    type: "rest"
+    base_url: "https://api.nansen.ai"
+    # API key from environment: NANSEN_API_KEY
+    
+    # Schema definition
+    schema_version: "1.0.0"
+    expected_fields:
+      required:
+        - "chain"
+        - "token_symbol"
+        - "net_flow_24h_usd"
+      optional:
+        - "token_address"
+        - "net_flow_1h_usd"
+        - "net_flow_7d_usd"
+        - "net_flow_30d_usd"
+    
+    # Data lifecycle
+    data_ttl_seconds: 900  # 15 minutes - smart money signals
+    reliability_weight: 0.95  # Premium institutional-grade data
+    
+    # Configuration
+    settings:
+      chains:
+        - "ethereum"
+        - "solana"
+      include_labels:
+        - "Fund"
+        - "Smart Trader"
+      exclude_labels:
+        - "30D Smart Trader"
+      include_stablecoins: false
+      include_native_tokens: true
+    
+    polling:
+      interval_seconds: 900  # 15 minutes (to respect rate limits)
+      
+    rate_limits:
+      requests_per_minute: 60  # Paid tier (varies by plan)
+      
+    health_check:
+      # Note: Nansen doesn't have a dedicated health endpoint
+      endpoint: "/api/v1/smart-money/netflow"
+      timeout_seconds: 15
+      
+  etherscan:
+    enabled: true
+    name: "Etherscan"
+    type: "rest"
+    base_url: "https://api.etherscan.io/api"
+    # API key from environment: ETHERSCAN_API_KEY
+    
+    # Schema definition
+    schema_version: "1.0.0"
+    expected_fields:
+      required:
+        - "hash"
+        - "from"
+        - "to"
+        - "value"
+      optional:
+        - "blockNumber"
+        - "timeStamp"
+        - "gas"
+        - "gasPrice"
+        - "input"
+        - "contractAddress"
+    
+    # Data lifecycle
+    data_ttl_seconds: 600  # 10 minutes - on-chain finality
+    reliability_weight: 0.85  # Direct blockchain data
+    
+    polling:
+      interval_seconds: 60
+      
+    rate_limits:
+      requests_per_second: 5  # Free tier
+      requests_per_day: 100000
+      
+    health_check:
+      endpoint: "?module=stats&action=ethprice"
+      timeout_seconds: 10
+      
   blockchain_explorer:
     enabled: false
     name: "BlockchainExplorer"
     type: "rest"
-    # TODO: Configure blockchain explorer API
     
-  # TODO: Add additional on-chain sources
+    # Schema definition
+    schema_version: "1.0.0"
+    expected_fields:
+      required:
+        - "tx_hash"
+        - "block_height"
+      optional:
+        - "value"
+        - "fee"
+        - "timestamp"
+    
+    # Data lifecycle
+    data_ttl_seconds: 600
+    reliability_weight: 0.8
 
 # ------------------------------------------------------------
 # Source Priority & Fallback
@@ -90,16 +358,84 @@ source_priority:
   news:
     - source: "crypto_news_api"
       priority: 100
+    - source: "cryptopanic"
+      priority: 90
       
   market:
-    - source: "exchange_websocket"
+    - source: "binance"
       priority: 100
+    - source: "exchange_websocket"
+      priority: 95
     - source: "coingecko"
       priority: 50  # Fallback
       
   onchain:
-    - source: "blockchain_explorer"
+    - source: "whale_alert"
       priority: 100
+    - source: "etherscan"
+      priority: 90
+    - source: "blockchain_explorer"
+      priority: 50
+
+# ------------------------------------------------------------
+# Exchange Flow Aggregation Settings
+# ------------------------------------------------------------
+exchange_flow_aggregation:
+  enabled: true
+  description: "Aggregates raw whale transactions into exchange-level flow metrics"
+  
+  # Tokens to track (must match onchain_flow_raw.token values)
+  tokens:
+    - "BTC"
+    - "ETH"
+    - "USDT"
+    - "USDC"
+    - "USDD"
+    - "DAI"
+    
+  # Time windows for aggregation
+  time_windows:
+    - "1h"   # Hourly aggregates
+    - "4h"   # 4-hour aggregates
+    - "24h"  # Daily aggregates
+    
+  # Minimum transaction count to create an aggregate
+  min_tx_count: 1
+  
+  # Known exchanges for entity normalization
+  known_exchanges:
+    - "binance"
+    - "coinbase"
+    - "kraken"
+    - "ftx"
+    - "okex"
+    - "huobi"
+    - "bitfinex"
+    - "kucoin"
+    - "gemini"
+    - "bitstamp"
+    - "bybit"
+    - "bitget"
+    
+  # Schema definition
+  schema_version: "1.0.0"
+  expected_fields:
+    required:
+      - "token"
+      - "exchange"
+      - "time_window"
+      - "net_flow"
+    optional:
+      - "inflow_amount"
+      - "outflow_amount"
+      - "inflow_usd"
+      - "outflow_usd"
+      - "flow_ratio"
+      - "dominance_pct"
+      
+  # Data lifecycle
+  data_ttl_seconds: 604800  # 7 days
+  reliability_weight: 0.85
 
 # ------------------------------------------------------------
 # Data Quality Settings
@@ -122,6 +458,8 @@ data_quality:
     enabled: true
     window_seconds: 3600
     
-  # TODO: Define data validation rules
-
-# TODO: Add additional data source configuration as needed
+  # Schema validation settings
+  schema_validation:
+    enabled: true
+    strict_mode: false  # Log warnings but don't reject data
+    missing_required_action: "warn"  # warn | reject | ignore

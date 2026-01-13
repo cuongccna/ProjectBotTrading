@@ -96,6 +96,11 @@ from .alerts import (
     AlertHistory,
     AlertManager,
     AlertDispatcher,
+    # Signal tier filtering
+    SubscriptionLevel,
+    SignalTierFilter,
+    create_signal_filter,
+    filter_signals_for_user,
 )
 
 from .notifications import (
@@ -191,6 +196,12 @@ __all__ = [
     "AlertHistory",
     "AlertManager",
     "AlertDispatcher",
+    
+    # Signal Tier Filter
+    "SubscriptionLevel",
+    "SignalTierFilter",
+    "create_signal_filter",
+    "filter_signals_for_user",
     
     # --------------------------------------------------------
     # Notifications

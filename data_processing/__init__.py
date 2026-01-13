@@ -11,10 +11,30 @@ Sub-packages:
 
 Main modules:
 - feature_engineering: Feature computation
+- contracts: Data contracts for processed market state
+- processing_module: Main processing pipeline module
 """
 
-# TODO: Export main components
-# from .cleaning import TextCleaner, Deduplicator
-# from .labeling import TopicClassifier, RiskKeywordDetector
-# from .sentiment import SentimentEngine, ConfidenceCalibrator
-# from .feature_engineering import FeatureEngineer
+# Data contracts for downstream consumers
+from .contracts import (
+    TrendState,
+    VolatilityLevel,
+    LiquidityGrade,
+    ProcessedMarketState,
+    ProcessedMarketStateBundle,
+)
+
+# Main processing module
+from .processing_module import ProcessingPipelineModule
+
+__all__ = [
+    # Enums
+    "TrendState",
+    "VolatilityLevel",
+    "LiquidityGrade",
+    # Main contract
+    "ProcessedMarketState",
+    "ProcessedMarketStateBundle",
+    # Module
+    "ProcessingPipelineModule",
+]

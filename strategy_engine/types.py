@@ -35,6 +35,71 @@ from typing import Optional, Dict, Any, List
 # ============================================================
 
 
+class SignalOutcome(str, Enum):
+    """
+    Outcome of a signal after expiration.
+    
+    ============================================================
+    PURPOSE
+    ============================================================
+    Track directional correctness of signals for analysis.
+    Does NOT represent PnL or profitability.
+    
+    ============================================================
+    CLASSIFICATION
+    ============================================================
+    - CORRECT: Price moved in predicted direction
+    - WRONG: Price moved opposite to prediction
+    - UNKNOWN: Cannot determine (insufficient data, neutral signal, etc.)
+    
+    ============================================================
+    """
+    CORRECT = "correct"
+    WRONG = "wrong"
+    UNKNOWN = "unknown"
+    
+    @classmethod
+    def evaluate(
+        cls,
+        direction: "TradeDirection",
+        price_at_signal: float,
+        price_at_expiry: float,
+        min_move_pct: float = 0.0,
+    ) -> "SignalOutcome":
+        """
+        Evaluate signal outcome based on price movement.
+        
+        Args:
+            direction: Signal direction (LONG/SHORT/NEUTRAL)
+            price_at_signal: Price when signal was generated
+            price_at_expiry: Price at signal expiration
+            min_move_pct: Minimum % move required to determine outcome.
+                          0.0 means any move counts.
+        
+        Returns:
+            SignalOutcome based on directional correctness
+        """
+        # Neutral signals cannot be evaluated
+        if direction == TradeDirection.NEUTRAL:
+            return cls.UNKNOWN
+        
+        # Calculate percentage move
+        if price_at_signal <= 0:
+            return cls.UNKNOWN
+        
+        pct_move = ((price_at_expiry - price_at_signal) / price_at_signal) * 100
+        
+        # Check if move meets minimum threshold
+        if abs(pct_move) < min_move_pct:
+            return cls.UNKNOWN
+        
+        # Evaluate directional correctness
+        if direction == TradeDirection.LONG:
+            return cls.CORRECT if pct_move > 0 else cls.WRONG
+        else:  # SHORT
+            return cls.CORRECT if pct_move < 0 else cls.WRONG
+
+
 class TradeDirection(Enum):
     """
     Direction of proposed trade.
@@ -58,10 +123,12 @@ class ConfidenceLevel(IntEnum):
     LOW: Signals align but weak confluence
     MEDIUM: Clear signal alignment
     HIGH: Strong confluence with multiple confirmations
+    VERY_HIGH: Exceptional confluence with overwhelming evidence
     """
     LOW = 1
     MEDIUM = 2
     HIGH = 3
+    VERY_HIGH = 4
     
     @classmethod
     def from_score(cls, score: float) -> "ConfidenceLevel":
@@ -74,11 +141,100 @@ class ConfidenceLevel(IntEnum):
         Returns:
             ConfidenceLevel
         """
-        if score >= 0.7:
+        if score >= 0.85:
+            return cls.VERY_HIGH
+        elif score >= 0.7:
             return cls.HIGH
         elif score >= 0.4:
             return cls.MEDIUM
         return cls.LOW
+
+
+class SignalTier(str, Enum):
+    """
+    Signal tier classification for prioritization and routing.
+    
+    ============================================================
+    CLASSIFICATION RULES
+    ============================================================
+    - INFORMATIONAL: NO_TRADE signals or TradeIntent with LOW confidence
+    - ACTIONABLE: TradeIntent with MEDIUM confidence
+    - PREMIUM: TradeIntent with HIGH or VERY_HIGH confidence
+    
+    ============================================================
+    PURPOSE
+    ============================================================
+    Determines how signals are routed, stored, and notified:
+    - INFORMATIONAL: Logged for analysis, no immediate action needed
+    - ACTIONABLE: Worth reviewing, moderate priority
+    - PREMIUM: High priority, immediate attention recommended
+    
+    ============================================================
+    """
+    INFORMATIONAL = "informational"
+    ACTIONABLE = "actionable"
+    PREMIUM = "premium"
+    
+    @classmethod
+    def from_signal(cls, signal: "StrategySignal") -> "SignalTier":
+        """
+        Classify a StrategySignal into its tier.
+        
+        Rules:
+        - NO_TRADE (not actionable) → INFORMATIONAL
+        - LOW confidence → INFORMATIONAL
+        - MEDIUM confidence → ACTIONABLE
+        - HIGH or VERY_HIGH confidence → PREMIUM
+        """
+        # Non-actionable signals are informational
+        if not signal.is_actionable:
+            return cls.INFORMATIONAL
+        
+        # Classify by confidence level
+        if signal.confidence_level == ConfidenceLevel.LOW:
+            return cls.INFORMATIONAL
+        elif signal.confidence_level == ConfidenceLevel.MEDIUM:
+            return cls.ACTIONABLE
+        else:  # HIGH or VERY_HIGH
+            return cls.PREMIUM
+    
+    @classmethod
+    def from_confidence_level(cls, level: ConfidenceLevel, is_actionable: bool = True) -> "SignalTier":
+        """
+        Get tier from confidence level.
+        
+        Args:
+            level: ConfidenceLevel enum value
+            is_actionable: Whether the signal is actionable (has direction)
+        """
+        if not is_actionable:
+            return cls.INFORMATIONAL
+        
+        if level == ConfidenceLevel.LOW:
+            return cls.INFORMATIONAL
+        elif level == ConfidenceLevel.MEDIUM:
+            return cls.ACTIONABLE
+        else:  # HIGH or VERY_HIGH
+            return cls.PREMIUM
+    
+    @property
+    def priority(self) -> int:
+        """Numeric priority (higher = more important)."""
+        return {
+            SignalTier.INFORMATIONAL: 1,
+            SignalTier.ACTIONABLE: 2,
+            SignalTier.PREMIUM: 3,
+        }[self]
+    
+    @property
+    def requires_attention(self) -> bool:
+        """Whether this tier warrants immediate attention."""
+        return self == SignalTier.PREMIUM
+    
+    @property
+    def should_notify(self) -> bool:
+        """Whether this tier should trigger notifications."""
+        return self in (SignalTier.ACTIONABLE, SignalTier.PREMIUM)
 
 
 class SignalStrength(IntEnum):
@@ -741,3 +897,261 @@ class SignalGenerationError(StrategyEngineError):
 class InvalidInputError(StrategyEngineError):
     """Raised when input data is invalid."""
     pass
+
+
+# ============================================================
+# SIGNAL TYPE ENUM (for typed signals)
+# ============================================================
+
+
+class SignalType(str, Enum):
+    """
+    Type of trading signal generated.
+    
+    Used for explicit categorization and filtering.
+    """
+    # Trend signals
+    TREND_FOLLOWING = "trend_following"
+    TREND_REVERSAL = "trend_reversal"
+    
+    # Breakout signals
+    BREAKOUT = "breakout"
+    BREAKDOWN = "breakdown"
+    
+    # Range signals
+    RANGE_SUPPORT = "range_support"
+    RANGE_RESISTANCE = "range_resistance"
+    
+    # Volatility signals
+    VOLATILITY_EXPANSION = "volatility_expansion"
+    VOLATILITY_CONTRACTION = "volatility_contraction"
+    
+    # Flow signals
+    ACCUMULATION = "accumulation"
+    DISTRIBUTION = "distribution"
+    
+    # Composite signals
+    MOMENTUM = "momentum"
+    MEAN_REVERSION = "mean_reversion"
+    
+    # No signal
+    NONE = "none"
+
+
+# ============================================================
+# PROCESSED MARKET STATE SIGNAL
+# ============================================================
+
+
+@dataclass(frozen=True)
+class StrategySignal:
+    """
+    Signal output from StrategyEngine based on ProcessedMarketState.
+    
+    ============================================================
+    PURPOSE
+    ============================================================
+    Standardized signal output that downstream modules can consume.
+    Generated from ProcessedMarketState, NOT raw MarketData.
+    
+    ============================================================
+    CONSUMERS
+    ============================================================
+    - RiskBudgetManager: For position sizing decisions
+    - ExecutionEngine: For order generation (NOT executed by StrategyEngine)
+    - Monitoring: For signal logging and analytics
+    
+    ============================================================
+    WHAT IT IS NOT
+    ============================================================
+    - NOT a trade order
+    - NOT an execution instruction
+    - NOT bypassing risk controls
+    
+    ============================================================
+    """
+    
+    # ============================================================
+    # REQUIRED FIELDS (no defaults) - MUST come first
+    # ============================================================
+    
+    # ---- Signal Classification (REQUIRED) ----
+    signal_type: SignalType                          # Type of signal
+    direction: TradeDirection                        # LONG, SHORT, NEUTRAL
+    confidence_score: float                          # 0.0 to 1.0
+    
+    # ============================================================
+    # OPTIONAL FIELDS (with defaults) - MUST come after required
+    # ============================================================
+    
+    # ---- Signal Identification ----
+    signal_id: str = field(default_factory=lambda: str(uuid4())[:12])
+    
+    # ---- Confidence Level (derived from score) ----
+    confidence_level: ConfidenceLevel = field(default=ConfidenceLevel.LOW)
+    
+    # ---- Context ----
+    symbol: str = "BTC"
+    timeframe: str = "1h"
+    exchange: str = "binance"
+    
+    # ---- Supporting Features (transparency) ----
+    supporting_features: Dict[str, Any] = field(default_factory=dict)
+    
+    # ---- Reason and Explanation ----
+    reason_code: Optional[StrategyReasonCode] = None
+    explanation: str = ""
+    
+    # ---- Source State Reference ----
+    source_state_id: Optional[str] = None            # ProcessedMarketState.state_id
+    
+    # ---- Timestamps ----
+    generated_at: datetime = field(default_factory=datetime.utcnow)
+    expires_at: Optional[datetime] = None
+    
+    # ---- Tracking ----
+    engine_version: str = "1.0.0"
+    
+    def __post_init__(self) -> None:
+        """Validate invariants."""
+        if not 0.0 <= self.confidence_score <= 1.0:
+            raise ValueError(
+                f"confidence_score must be 0.0-1.0, got {self.confidence_score}"
+            )
+        
+        # Auto-set confidence level from score if needed
+        if self.confidence_level == ConfidenceLevel.LOW and self.confidence_score > 0:
+            object.__setattr__(
+                self, 
+                'confidence_level', 
+                ConfidenceLevel.from_score(self.confidence_score)
+            )
+    
+    @property
+    def is_actionable(self) -> bool:
+        """Check if signal is actionable (has direction and confidence)."""
+        return (
+            self.direction != TradeDirection.NEUTRAL and
+            self.confidence_score >= 0.3 and
+            self.signal_type != SignalType.NONE
+        )
+    
+    @property
+    def is_bullish(self) -> bool:
+        """Check if signal is bullish."""
+        return self.direction == TradeDirection.LONG
+    
+    @property
+    def is_bearish(self) -> bool:
+        """Check if signal is bearish."""
+        return self.direction == TradeDirection.SHORT
+    
+    @property
+    def tier(self) -> "SignalTier":
+        """
+        Get the signal tier classification.
+        
+        Returns SignalTier based on:
+        - NO_TRADE (not actionable) → INFORMATIONAL
+        - LOW confidence → INFORMATIONAL
+        - MEDIUM confidence → ACTIONABLE
+        - HIGH or VERY_HIGH confidence → PREMIUM
+        """
+        return SignalTier.from_signal(self)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "signal_id": self.signal_id,
+            "signal_type": self.signal_type.value,
+            "direction": self.direction.value,
+            "confidence_score": self.confidence_score,
+            "confidence_level": self.confidence_level.name,
+            "tier": self.tier.value,
+            "symbol": self.symbol,
+            "timeframe": self.timeframe,
+            "exchange": self.exchange,
+            "supporting_features": self.supporting_features,
+            "reason_code": self.reason_code.value if self.reason_code else None,
+            "explanation": self.explanation,
+            "source_state_id": self.source_state_id,
+            "generated_at": self.generated_at.isoformat() if self.generated_at else None,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+            "is_actionable": self.is_actionable,
+            "engine_version": self.engine_version,
+        }
+    
+    @classmethod
+    def no_signal(
+        cls,
+        symbol: str = "BTC",
+        timeframe: str = "1h",
+        reason: str = "No signal conditions met",
+    ) -> "StrategySignal":
+        """Factory for creating a no-signal result."""
+        return cls(
+            signal_type=SignalType.NONE,
+            direction=TradeDirection.NEUTRAL,
+            confidence_score=0.0,
+            symbol=symbol,
+            timeframe=timeframe,
+            explanation=reason,
+        )
+
+
+@dataclass(frozen=True)
+class SignalBundle:
+    """
+    Collection of signals for a given evaluation cycle.
+    
+    Allows multiple signals to be generated and ranked.
+    """
+    signals: List[StrategySignal] = field(default_factory=list)
+    evaluation_id: str = field(default_factory=lambda: str(uuid4())[:8])
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+    
+    # Evaluation metadata
+    symbols_evaluated: List[str] = field(default_factory=list)
+    timeframes_evaluated: List[str] = field(default_factory=list)
+    evaluation_duration_ms: Optional[float] = None
+    
+    @property
+    def has_actionable_signals(self) -> bool:
+        """Check if any actionable signals exist."""
+        return any(s.is_actionable for s in self.signals)
+    
+    @property
+    def actionable_signals(self) -> List[StrategySignal]:
+        """Get only actionable signals."""
+        return [s for s in self.signals if s.is_actionable]
+    
+    @property
+    def best_signal(self) -> Optional[StrategySignal]:
+        """Get the highest confidence actionable signal."""
+        actionable = self.actionable_signals
+        if not actionable:
+            return None
+        return max(actionable, key=lambda s: s.confidence_score)
+    
+    def get_signals_for_symbol(self, symbol: str) -> List[StrategySignal]:
+        """Get signals for a specific symbol."""
+        return [s for s in self.signals if s.symbol == symbol]
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "evaluation_id": self.evaluation_id,
+            "timestamp": self.timestamp.isoformat(),
+            "signal_count": len(self.signals),
+            "actionable_count": len(self.actionable_signals),
+            "signals": [s.to_dict() for s in self.signals],
+            "symbols_evaluated": self.symbols_evaluated,
+            "timeframes_evaluated": self.timeframes_evaluated,
+            "evaluation_duration_ms": self.evaluation_duration_ms,
+        }
+
+
+# ============================================================
+# IMPORTS FOR UUID
+# ============================================================
+from uuid import uuid4

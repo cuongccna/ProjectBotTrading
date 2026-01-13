@@ -156,3 +156,44 @@ templates:
   # TODO: Add additional templates
 
 # TODO: DECISION POINT - Add additional notification channels (email, Slack, etc.)?
+
+# ------------------------------------------------------------
+# Signal Tier Access Control (Subscription-based)
+# ------------------------------------------------------------
+# Determines which signal tiers each subscription level can access.
+# Signal tiers: informational, actionable, premium
+# 
+# Rules:
+# - Free users: INFORMATIONAL only
+# - Paid users: INFORMATIONAL + ACTIONABLE
+# - Premium users: INFORMATIONAL + ACTIONABLE + PREMIUM
+# ------------------------------------------------------------
+signal_tier_access:
+  # Subscription levels and their allowed tiers
+  subscription_levels:
+    free:
+      allowed_tiers:
+        - informational
+      description: "Free tier - informational signals only"
+      
+    paid:
+      allowed_tiers:
+        - informational
+        - actionable
+      description: "Paid tier - informational and actionable signals"
+      
+    premium:
+      allowed_tiers:
+        - informational
+        - actionable
+        - premium
+      description: "Premium tier - all signal types including premium"
+  
+  # Default subscription level if not specified
+  default_level: "free"
+  
+  # Whether to log filtered (blocked) signals
+  log_filtered: true
+  
+  # Whether to include tier info in notifications
+  include_tier_badge: true

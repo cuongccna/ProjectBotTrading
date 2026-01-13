@@ -28,7 +28,28 @@ from .types import (
     TradeIntent,
     NoTradeResult,
     IntentStatus,
+    ConfidenceLevel,
+    SignalTier,
 )
+
+
+def _compute_tier_from_confidence(
+    confidence: ConfidenceLevel,
+    has_intent: bool = True,
+) -> str:
+    """
+    Compute signal tier from confidence level.
+    
+    Rules:
+    - NO_TRADE → INFORMATIONAL
+    - TradeIntent with LOW confidence → INFORMATIONAL
+    - MEDIUM → ACTIONABLE
+    - HIGH or VERY_HIGH → PREMIUM
+    """
+    if not has_intent:
+        return SignalTier.INFORMATIONAL.value
+    
+    return SignalTier.from_confidence_level(confidence, is_actionable=True).value
 
 
 class StrategyEngineRepository:
@@ -69,7 +90,7 @@ class StrategyEngineRepository:
         Save a complete strategy evaluation.
         
         Creates:
-        - StrategyEvaluation record
+        - StrategyEvaluation record with tier classification
         - Optionally TradeIntentRecord if has_intent
         
         Args:
@@ -84,11 +105,16 @@ class StrategyEngineRepository:
             symbol = output.trade_intent.symbol
             exchange = output.trade_intent.exchange
             timeframe = output.trade_intent.timeframe
+            tier = _compute_tier_from_confidence(
+                output.trade_intent.confidence,
+                has_intent=True,
+            )
         else:
             timestamp = output.no_trade.timestamp
             symbol = output.no_trade.symbol
             exchange = output.no_trade.exchange
             timeframe = output.no_trade.timeframe
+            tier = SignalTier.INFORMATIONAL.value  # NO_TRADE always informational
         
         evaluation = StrategyEvaluation(
             evaluation_id=output.evaluation_id,
@@ -105,6 +131,7 @@ class StrategyEngineRepository:
             evaluation_duration_ms=output.evaluation_duration_ms,
             evaluation_timestamp=timestamp,
             engine_version=output.engine_version,
+            tier=tier,
         )
         
         self._session.add(evaluation)
@@ -118,7 +145,7 @@ class StrategyEngineRepository:
         evaluation_id: Optional[str] = None,
     ) -> TradeIntentRecord:
         """
-        Save a trade intent.
+        Save a trade intent with tier classification.
         
         Args:
             intent: The TradeIntent to persist
@@ -127,6 +154,9 @@ class StrategyEngineRepository:
         Returns:
             Created TradeIntentRecord
         """
+        # Compute tier from confidence
+        tier = _compute_tier_from_confidence(intent.confidence, has_intent=True)
+        
         record = TradeIntentRecord(
             symbol=intent.symbol,
             exchange=intent.exchange,
@@ -158,6 +188,7 @@ class StrategyEngineRepository:
             intent_timestamp=intent.timestamp,
             expires_at=intent.expires_at,
             evaluation_id=evaluation_id,
+            tier=tier,
         )
         
         self._session.add(record)
@@ -171,7 +202,7 @@ class StrategyEngineRepository:
         evaluation_id: Optional[str] = None,
     ) -> NoTradeRecord:
         """
-        Save a NO_TRADE decision.
+        Save a NO_TRADE decision (always tier=informational).
         
         Args:
             no_trade: The NoTradeResult to persist
@@ -216,6 +247,7 @@ class StrategyEngineRepository:
             ),
             evaluation_timestamp=no_trade.timestamp,
             evaluation_id=evaluation_id,
+            tier=SignalTier.INFORMATIONAL.value,  # NO_TRADE always informational
         )
         
         self._session.add(record)
@@ -549,3 +581,160 @@ class StrategyEngineRepository:
         )
         result = await self._session.execute(stmt)
         return {row[0]: row[1] for row in result.all()}
+    
+    # --------------------------------------------------------
+    # TIER-BASED QUERIES
+    # --------------------------------------------------------
+    
+    async def get_evaluations_by_tier(
+        self,
+        tier: str,
+        symbol: Optional[str] = None,
+        hours: Optional[int] = None,
+        limit: int = 100,
+    ) -> List[StrategyEvaluation]:
+        """
+        Get evaluations by tier classification.
+        
+        Args:
+            tier: Tier value (informational, actionable, premium)
+            symbol: Optional symbol filter
+            hours: Optional hours to look back
+            limit: Max records to return
+        
+        Returns:
+            List of StrategyEvaluation records
+        """
+        conditions = [StrategyEvaluation.tier == tier]
+        
+        if symbol:
+            conditions.append(StrategyEvaluation.symbol == symbol)
+        
+        if hours:
+            since = datetime.utcnow() - timedelta(hours=hours)
+            conditions.append(StrategyEvaluation.evaluation_timestamp >= since)
+        
+        stmt = (
+            select(StrategyEvaluation)
+            .where(and_(*conditions))
+            .order_by(desc(StrategyEvaluation.evaluation_timestamp))
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+    
+    async def get_intents_by_tier(
+        self,
+        tier: str,
+        symbol: Optional[str] = None,
+        hours: Optional[int] = None,
+        limit: int = 100,
+    ) -> List[TradeIntentRecord]:
+        """
+        Get trade intents by tier classification.
+        
+        Args:
+            tier: Tier value (informational, actionable, premium)
+            symbol: Optional symbol filter
+            hours: Optional hours to look back
+            limit: Max records to return
+        
+        Returns:
+            List of TradeIntentRecord records
+        """
+        conditions = [TradeIntentRecord.tier == tier]
+        
+        if symbol:
+            conditions.append(TradeIntentRecord.symbol == symbol)
+        
+        if hours:
+            since = datetime.utcnow() - timedelta(hours=hours)
+            conditions.append(TradeIntentRecord.intent_timestamp >= since)
+        
+        stmt = (
+            select(TradeIntentRecord)
+            .where(and_(*conditions))
+            .order_by(desc(TradeIntentRecord.intent_timestamp))
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+    
+    async def get_tier_distribution(
+        self,
+        hours: int = 24,
+        symbol: Optional[str] = None,
+    ) -> dict[str, int]:
+        """
+        Get distribution of evaluation tiers.
+        
+        Args:
+            hours: Hours to look back
+            symbol: Optional symbol filter
+        
+        Returns:
+            Dict mapping tier to count
+        """
+        since = datetime.utcnow() - timedelta(hours=hours)
+        
+        conditions = [StrategyEvaluation.evaluation_timestamp >= since]
+        if symbol:
+            conditions.append(StrategyEvaluation.symbol == symbol)
+        
+        stmt = (
+            select(StrategyEvaluation.tier, func.count(StrategyEvaluation.id))
+            .where(and_(*conditions))
+            .group_by(StrategyEvaluation.tier)
+        )
+        result = await self._session.execute(stmt)
+        return {row[0]: row[1] for row in result.all()}
+    
+    async def get_premium_signals(
+        self,
+        symbol: Optional[str] = None,
+        hours: int = 24,
+        limit: int = 50,
+    ) -> List[TradeIntentRecord]:
+        """
+        Get premium tier trade intents (HIGH/VERY_HIGH confidence).
+        
+        Convenience method for getting high-priority signals.
+        
+        Args:
+            symbol: Optional symbol filter
+            hours: Hours to look back
+            limit: Max records to return
+        
+        Returns:
+            List of premium TradeIntentRecord records
+        """
+        return await self.get_intents_by_tier(
+            tier="premium",
+            symbol=symbol,
+            hours=hours,
+            limit=limit,
+        )
+    
+    async def get_actionable_signals(
+        self,
+        symbol: Optional[str] = None,
+        hours: int = 24,
+        limit: int = 100,
+    ) -> List[TradeIntentRecord]:
+        """
+        Get actionable tier trade intents (MEDIUM confidence).
+        
+        Args:
+            symbol: Optional symbol filter
+            hours: Hours to look back
+            limit: Max records to return
+        
+        Returns:
+            List of actionable TradeIntentRecord records
+        """
+        return await self.get_intents_by_tier(
+            tier="actionable",
+            symbol=symbol,
+            hours=hours,
+            limit=limit,
+        )

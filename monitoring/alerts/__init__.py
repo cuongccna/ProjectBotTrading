@@ -25,6 +25,14 @@ from .manager import (
     AlertDispatcher,
     NotificationHandler,
 )
+from .signal_tier_filter import (
+    SubscriptionLevel,
+    TierAccessConfig,
+    SignalTierFilterConfig,
+    SignalTierFilter,
+    create_signal_filter,
+    filter_signals_for_user,
+)
 
 
 __all__ = [
@@ -58,4 +66,12 @@ __all__ = [
     "AlertManager",
     "AlertDispatcher",
     "NotificationHandler",
+    
+    # Signal tier filter
+    "SubscriptionLevel",
+    "TierAccessConfig",
+    "SignalTierFilterConfig",
+    "SignalTierFilter",
+    "create_signal_filter",
+    "filter_signals_for_user",
 ]

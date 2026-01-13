@@ -295,6 +295,76 @@ class OnchainFlowRaw(Base):
 
 
 # =============================================================
+# 5b. EXCHANGE FLOW AGGREGATES TABLE
+# =============================================================
+
+class ExchangeFlowAggregate(Base):
+    """
+    Aggregated exchange flow data by token, exchange, and time window.
+    
+    Source: Aggregation of onchain_flow_raw data
+    Update Frequency: Per ingestion cycle (after raw data collection)
+    Retention: 90 days
+    
+    Tracks:
+    - Total inflow/outflow per exchange per token
+    - Net flow (inflow - outflow)
+    - Transaction counts
+    - Rolling time window aggregates (1h, 4h, 24h)
+    """
+    __tablename__ = "exchange_flow_aggregates"
+    
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    correlation_id = Column(String(36), nullable=False, default=generate_uuid, index=True)
+    
+    # Dimensions
+    token = Column(String(20), nullable=False, index=True)  # BTC, ETH, USDT
+    exchange = Column(String(100), nullable=False, index=True)  # binance, coinbase, kraken
+    time_window = Column(String(10), nullable=False)  # 1h, 4h, 24h
+    
+    # Flow metrics (in token units)
+    inflow_amount = Column(Float, nullable=False, default=0)
+    outflow_amount = Column(Float, nullable=False, default=0)
+    net_flow = Column(Float, nullable=False, default=0)  # inflow - outflow
+    
+    # Flow metrics (in USD)
+    inflow_usd = Column(Float, nullable=True)
+    outflow_usd = Column(Float, nullable=True)
+    net_flow_usd = Column(Float, nullable=True)
+    
+    # Transaction counts
+    inflow_tx_count = Column(Integer, nullable=False, default=0)
+    outflow_tx_count = Column(Integer, nullable=False, default=0)
+    total_tx_count = Column(Integer, nullable=False, default=0)
+    
+    # Derived metrics
+    flow_ratio = Column(Float, nullable=True)  # inflow / outflow (if outflow > 0)
+    dominance_pct = Column(Float, nullable=True)  # This exchange's share of total flow
+    
+    # Time window boundaries
+    window_start = Column(DateTime, nullable=False)
+    window_end = Column(DateTime, nullable=False)
+    
+    # Source tracking
+    source_name = Column(String(100), nullable=False, default="whale_alert")
+    source_module = Column(String(100), nullable=False, default="exchange_flow_aggregator")
+    data_points_count = Column(Integer, nullable=False, default=0)
+    
+    # Timestamps
+    aggregated_at = Column(DateTime, nullable=False, default=utc_now)
+    created_at = Column(DateTime, nullable=False, default=utc_now, index=True)
+    
+    __table_args__ = (
+        Index("idx_exchange_flow_token_exchange", "token", "exchange"),
+        Index("idx_exchange_flow_window", "token", "time_window", "window_start"),
+        UniqueConstraint(
+            "token", "exchange", "time_window", "window_start",
+            name="uq_exchange_flow_aggregate"
+        ),
+    )
+
+
+# =============================================================
 # 6. FLOW SCORES TABLE
 # =============================================================
 
@@ -698,6 +768,234 @@ class SystemMonitoring(Base):
 
 
 # =============================================================
+# 13. PROCESSED MARKET DATA TABLE
+# =============================================================
+
+class ProcessedMarketData(Base):
+    """
+    Processed market data with derived features.
+    
+    Source: data_processing.processing_module
+    Update Frequency: Per processing cycle
+    Retention: 90 days
+    
+    Stores computed features like returns, volatility, volume changes
+    aggregated by symbol and time interval.
+    """
+    __tablename__ = "processed_market_data"
+    
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    correlation_id = Column(String(36), nullable=False, default=generate_uuid, index=True)
+    
+    # Dimensions
+    symbol = Column(String(20), nullable=False, index=True)  # BTC, ETH
+    interval = Column(String(10), nullable=False)  # 1h, 24h
+    exchange = Column(String(50), nullable=False, index=True)
+    
+    # Time window
+    window_start = Column(DateTime, nullable=False, index=True)
+    window_end = Column(DateTime, nullable=False)
+    
+    # Price metrics (from aggregated candles)
+    open_price = Column(Float, nullable=False)
+    high_price = Column(Float, nullable=False)
+    low_price = Column(Float, nullable=False)
+    close_price = Column(Float, nullable=False)
+    vwap = Column(Float, nullable=True)
+    
+    # Volume metrics
+    total_volume = Column(Float, nullable=False)
+    total_quote_volume = Column(Float, nullable=True)
+    avg_volume = Column(Float, nullable=True)
+    
+    # Derived features
+    price_return = Column(Float, nullable=True)  # (close - open) / open
+    price_return_pct = Column(Float, nullable=True)  # percentage return
+    volatility = Column(Float, nullable=True)  # std dev of returns
+    high_low_range = Column(Float, nullable=True)  # (high - low) / low
+    volume_change = Column(Float, nullable=True)  # vs previous period
+    volume_change_pct = Column(Float, nullable=True)  # percentage change
+    
+    # Statistics
+    candle_count = Column(Integer, nullable=False)  # number of source candles
+    trade_count = Column(Integer, nullable=True)  # total trades in window
+    
+    # Quality indicators
+    data_quality_score = Column(Float, nullable=True)  # 0-1, completeness
+    has_gaps = Column(Boolean, default=False)  # missing candles detected
+    
+    # Source tracking
+    source_module = Column(String(100), nullable=False, default="processing_pipeline")
+    processing_version = Column(String(20), nullable=False, default="1.0.0")
+    
+    # Timestamps
+    calculated_at = Column(DateTime, nullable=False, default=utc_now)
+    created_at = Column(DateTime, nullable=False, default=utc_now, index=True)
+    
+    __table_args__ = (
+        UniqueConstraint("symbol", "exchange", "interval", "window_start", name="uq_processed_market_data"),
+        Index("idx_processed_market_symbol_interval", "symbol", "interval", "window_start"),
+        Index("idx_processed_market_time", "window_start", "window_end"),
+    )
+
+
+# =============================================================
+# 14. PROCESSED MARKET STATE TABLE
+# =============================================================
+
+class ProcessedMarketStateRecord(Base):
+    """
+    Persisted processed market state for downstream consumption.
+    
+    Source: data_processing.ProcessingPipelineModule
+    Consumers: RiskScoringEngine, StrategyEngine
+    Update Frequency: Per processing cycle
+    Retention: 30 days
+    
+    This table stores the canonical market state that downstream
+    modules (RiskScoringEngine, StrategyEngine) read deterministically.
+    """
+    __tablename__ = "processed_market_state"
+    
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    state_id = Column(String(36), nullable=False, unique=True, index=True)
+    
+    # ---- Identification ----
+    symbol = Column(String(20), nullable=False, index=True)  # BTC, ETH
+    timeframe = Column(String(10), nullable=False, index=True)  # 1h, 4h, 24h
+    exchange = Column(String(50), nullable=False, default="binance")
+    
+    # ---- Core State (categorical) ----
+    trend_state = Column(String(30), nullable=False)  # strong_uptrend, uptrend, neutral, downtrend, strong_downtrend, ranging
+    volatility_level = Column(String(20), nullable=False)  # very_low, low, normal, high, extreme
+    liquidity_score = Column(Float, nullable=False)  # 0.0 to 1.0
+    liquidity_grade = Column(String(20), nullable=False)  # excellent, good, adequate, poor, critical
+    
+    # ---- Supporting Metrics ----
+    current_price = Column(Float, nullable=True)
+    price_change_pct = Column(Float, nullable=True)
+    volatility_raw = Column(Float, nullable=True)
+    volatility_percentile = Column(Float, nullable=True)  # 0-100
+    volume_ratio = Column(Float, nullable=True)
+    spread_pct = Column(Float, nullable=True)
+    
+    # ---- Trend Details ----
+    trend_strength = Column(Float, nullable=True)  # 0.0 to 1.0
+    trend_direction_numeric = Column(Float, nullable=True)  # -1.0 to +1.0
+    trend_duration_periods = Column(Integer, nullable=True)
+    
+    # ---- Quality & Tradeability ----
+    data_quality_score = Column(Float, nullable=True)
+    is_tradeable = Column(Boolean, nullable=False, default=True)
+    risk_score_hint = Column(Float, nullable=True)  # 0-100 preliminary hint
+    
+    # ---- Time Window ----
+    window_start = Column(DateTime, nullable=True)
+    window_end = Column(DateTime, nullable=True)
+    
+    # ---- Source Tracking ----
+    source_module = Column(String(100), nullable=False, default="ProcessingPipelineModule")
+    version = Column(String(20), nullable=False, default="1.0.0")
+    
+    # ---- Timestamps ----
+    calculated_at = Column(DateTime, nullable=False, default=utc_now, index=True)
+    created_at = Column(DateTime, nullable=False, default=utc_now)
+    
+    __table_args__ = (
+        UniqueConstraint("symbol", "timeframe", "exchange", "calculated_at", name="uq_processed_market_state"),
+        Index("idx_processed_state_symbol_time", "symbol", "timeframe", "calculated_at"),
+        Index("idx_processed_state_latest", "symbol", "timeframe", "calculated_at"),
+    )
+
+
+# =============================================================
+# 14. STRATEGY SIGNAL RECORD TABLE
+# =============================================================
+
+class StrategySignalRecord(Base):
+    """
+    Strategy signals generated by StrategyEngine.
+    
+    ============================================================
+    PURPOSE
+    ============================================================
+    Persists all strategy signals with their tier classification
+    for auditing, analysis, and downstream processing.
+    
+    ============================================================
+    TIER CLASSIFICATION
+    ============================================================
+    - INFORMATIONAL: NO_TRADE or LOW confidence
+    - ACTIONABLE: MEDIUM confidence
+    - PREMIUM: HIGH or VERY_HIGH confidence
+    
+    ============================================================
+    """
+    __tablename__ = "strategy_signals"
+    
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    signal_id = Column(String(36), nullable=False, unique=True, index=True)
+    
+    # ---- Signal Classification ----
+    signal_type = Column(String(30), nullable=False, index=True)  # trend_following, momentum, breakout, etc.
+    direction = Column(String(10), nullable=False, index=True)  # LONG, SHORT, NEUTRAL
+    
+    # ---- Confidence ----
+    confidence_score = Column(Float, nullable=False)  # 0.0 to 1.0
+    confidence_level = Column(String(15), nullable=False)  # LOW, MEDIUM, HIGH, VERY_HIGH
+    
+    # ---- TIER (key classification) ----
+    tier = Column(String(20), nullable=False, index=True)  # informational, actionable, premium
+    
+    # ---- Context ----
+    symbol = Column(String(20), nullable=False, index=True)
+    timeframe = Column(String(10), nullable=False)
+    exchange = Column(String(50), nullable=False, default="binance")
+    
+    # ---- Supporting Features (JSON) ----
+    supporting_features = Column(JSONB, nullable=True)
+    
+    # ---- Reason and Explanation ----
+    reason_code = Column(String(50), nullable=True)
+    explanation = Column(Text, nullable=True)
+    
+    # ---- Source Reference ----
+    source_state_id = Column(String(36), nullable=True, index=True)  # ProcessedMarketState.state_id
+    
+    # ---- Status Flags ----
+    is_actionable = Column(Boolean, nullable=False, default=False, index=True)
+    requires_attention = Column(Boolean, nullable=False, default=False)
+    
+    # ---- Notification Tracking ----
+    notified = Column(Boolean, nullable=False, default=False)
+    notified_at = Column(DateTime, nullable=True)
+    
+    # ---- Timestamps ----
+    generated_at = Column(DateTime, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=utc_now)
+    
+    # ---- Outcome Tracking ----
+    # Evaluated after signal expiration for directional correctness
+    outcome = Column(String(15), nullable=True, index=True)  # correct, wrong, unknown
+    outcome_evaluated_at = Column(DateTime, nullable=True)
+    price_at_signal = Column(Float, nullable=True)    # Price when signal generated
+    price_at_expiry = Column(Float, nullable=True)    # Price at expiration
+    price_move_pct = Column(Float, nullable=True)     # % price movement
+    
+    # ---- Tracking ----
+    engine_version = Column(String(20), nullable=False, default="1.0.0")
+    
+    __table_args__ = (
+        Index("idx_strategy_signals_tier_time", "tier", "generated_at"),
+        Index("idx_strategy_signals_symbol_time", "symbol", "generated_at"),
+        Index("idx_strategy_signals_actionable", "is_actionable", "tier", "generated_at"),
+        Index("idx_strategy_signals_outcome", "outcome", "generated_at"),
+        Index("idx_strategy_signals_pending_outcome", "expires_at", "outcome"),
+    )
+
+
+# =============================================================
 # EXPORT ALL MODELS
 # =============================================================
 
@@ -714,4 +1012,7 @@ __all__ = [
     "PositionSizing",
     "ExecutionRecord",
     "SystemMonitoring",
+    "ProcessedMarketData",
+    "ProcessedMarketStateRecord",
+    "StrategySignalRecord",
 ]
