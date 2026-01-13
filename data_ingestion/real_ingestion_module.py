@@ -95,6 +95,19 @@ class RealIngestionConfig:
     whalealert_currencies: List[str] = field(default_factory=lambda: ["btc", "eth", "usdt", "usdc"])
     whalealert_lookback_seconds: int = 3600  # Look back 1 hour
     
+    # Etherscan on-chain settings (free tier: 5 calls/sec, 100k calls/day)
+    etherscan_enabled: bool = True  # Enabled by default (free tier)
+    etherscan_api_key: Optional[str] = None  # Falls back to ETHERSCAN_API_KEY env
+    etherscan_base_url: str = "https://api.etherscan.io/v2/api"
+    etherscan_chains: List[str] = field(default_factory=lambda: ["ethereum"])  # chainid=1
+    etherscan_min_value_eth: float = 100.0  # Minimum 100 ETH (~$200k) to track
+    etherscan_lookback_blocks: int = 100  # ~20 min of blocks
+    etherscan_tracked_tokens: List[str] = field(default_factory=lambda: [
+        "0xdAC17F958D2ee523a2206206994597C13D831ec7",  # USDT
+        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",  # USDC
+        "0x6B175474E89094C44Da98b954EescdeCB5BAE3A7D",  # DAI
+    ])
+    
     # Nansen Smart Money settings (PREMIUM - requires paid subscription)
     nansen_enabled: bool = False  # Disabled by default (requires paid plan)
     nansen_base_url: str = "https://api.nansen.ai/api/v1"
@@ -145,6 +158,8 @@ class IngestionCycleResult:
     cryptopanic_stored: int = 0
     whalealert_fetched: int = 0
     whalealert_stored: int = 0
+    etherscan_fetched: int = 0
+    etherscan_stored: int = 0
     nansen_fetched: int = 0
     nansen_stored: int = 0
     
@@ -312,6 +327,16 @@ class RealIngestionModule:
                 warnings.append(
                     f"WhaleAlert: min_value_usd={self._config.whalealert_min_value_usd} is below "
                     "free tier minimum ($500,000). API may reject requests."
+                )
+        
+        # ---- Etherscan validation (free tier) ----
+        if self._config.etherscan_enabled:
+            enabled_sources.append("Etherscan")
+            api_key = self._config.etherscan_api_key or os.getenv("ETHERSCAN_API_KEY")
+            if not api_key:
+                warnings.append(
+                    "Etherscan: ETHERSCAN_API_KEY not found. On-chain tracking disabled. "
+                    "Set ETHERSCAN_API_KEY in environment for on-chain data."
                 )
         
         # ---- Nansen Smart Money validation (PREMIUM) ----
@@ -544,6 +569,23 @@ class RealIngestionModule:
                 except Exception as e:
                     self._logger.warning(f"[WhaleAlert] Error: {e}")
                     result.errors.append(f"WhaleAlert: {e}")
+            
+            # Fetch from Etherscan (free tier on-chain data)
+            if self._config.etherscan_enabled:
+                try:
+                    eth_records = await self._fetch_etherscan_flows()
+                    result.etherscan_fetched = len(eth_records)
+                    
+                    stored = await self._persist_onchain_flow_records(eth_records, "etherscan")
+                    result.etherscan_stored = stored
+                    
+                    self._logger.info(
+                        f"[Etherscan] Fetched: {result.etherscan_fetched}, "
+                        f"Stored: {result.etherscan_stored}"
+                    )
+                except Exception as e:
+                    self._logger.warning(f"[Etherscan] Error: {e}")
+                    result.errors.append(f"Etherscan: {e}")
             
             # Fetch from Nansen Smart Money API (PREMIUM)
             if self._config.nansen_enabled:
@@ -1484,6 +1526,206 @@ class RealIngestionModule:
         except Exception as e:
             self._logger.error(
                 f"[WhaleAlert] Unexpected error: {type(e).__name__}: {e}",
+                exc_info=True
+            )
+            return []
+    
+    async def _fetch_etherscan_flows(self) -> List[Dict[str, Any]]:
+        """
+        Fetch large ETH transactions from Etherscan V2 API (free tier).
+        
+        API Docs: https://docs.etherscan.io/v/etherscan-v2
+        Endpoint: GET /v2/api?chainid=1&module=account&action=txlistinternal
+        
+        Free tier limits:
+        - 5 calls/second
+        - 100,000 calls/day
+        
+        Returns:
+            List of onchain flow records ready for persistence
+        """
+        api_key = self._config.etherscan_api_key or os.getenv("ETHERSCAN_API_KEY")
+        if not api_key:
+            self._logger.debug(
+                "[Etherscan] No API key configured (ETHERSCAN_API_KEY). Skipping..."
+            )
+            return []
+        
+        now = datetime.now(timezone.utc)
+        all_records = []
+        
+        # Chain ID mapping
+        CHAIN_IDS = {
+            "ethereum": 1,
+            "polygon": 137,
+            "bsc": 56,
+            "arbitrum": 42161,
+            "optimism": 10,
+            "base": 8453,
+        }
+        
+        # Known exchange addresses (sample - extend as needed)
+        EXCHANGE_ADDRESSES = {
+            # Binance
+            "0x28c6c06298d514db089934071355e5743bf21d60": "binance",
+            "0x21a31ee1afc51d94c2efccaa2092ad1028285549": "binance",
+            "0xdfd5293d8e347dfe59e90efd55b2956a1343963d": "binance",
+            # Coinbase
+            "0x71660c4005ba85c37ccec55d0c4493e66fe775d3": "coinbase",
+            "0x503828976d22510aad0201ac7ec88293211d23da": "coinbase",
+            # Kraken
+            "0x2910543af39aba0cd09dbb2d50200b3e800a63d2": "kraken",
+            # OKX
+            "0x6cc5f688a315f3dc28a7781717a9a798a59fda7b": "okx",
+        }
+        
+        try:
+            timeout = aiohttp.ClientTimeout(total=self._config.timeout_seconds)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                for chain in self._config.etherscan_chains:
+                    chain_id = CHAIN_IDS.get(chain.lower(), 1)
+                    
+                    # Fetch recent large transactions using internal tx endpoint
+                    # This catches ETH transfers between contracts
+                    url = self._config.etherscan_base_url
+                    params = {
+                        "chainid": chain_id,
+                        "module": "account",
+                        "action": "txlist",
+                        "address": "0x0000000000000000000000000000000000000000",  # Null address for burns
+                        "startblock": 0,
+                        "endblock": 99999999,
+                        "page": 1,
+                        "offset": 50,  # Limit results
+                        "sort": "desc",  # Most recent first
+                        "apikey": api_key,
+                    }
+                    
+                    # Note: Etherscan doesn't have a "large transactions" endpoint
+                    # We'll use the token transfer endpoint instead to track stablecoin flows
+                    
+                    # Fetch ERC-20 token transfers for tracked tokens
+                    for token_address in self._config.etherscan_tracked_tokens[:3]:  # Limit to avoid rate limits
+                        token_url = self._config.etherscan_base_url
+                        token_params = {
+                            "chainid": chain_id,
+                            "module": "account",
+                            "action": "tokentx",
+                            "contractaddress": token_address,
+                            "page": 1,
+                            "offset": 25,  # Limit per token
+                            "sort": "desc",
+                            "apikey": api_key,
+                        }
+                        
+                        try:
+                            async with session.get(token_url, params=token_params) as response:
+                                if response.status == 429:
+                                    self._logger.warning(
+                                        "[Etherscan] Rate limited. Pausing..."
+                                    )
+                                    await asyncio.sleep(1)  # Brief pause
+                                    continue
+                                
+                                if response.status != 200:
+                                    continue
+                                
+                                data = await response.json()
+                                
+                                if data.get("status") != "1":
+                                    message = data.get("message", "")
+                                    if "No transactions found" not in message:
+                                        self._logger.debug(
+                                            f"[Etherscan] API response: {message}"
+                                        )
+                                    continue
+                                
+                                transfers = data.get("result", [])
+                                if not isinstance(transfers, list):
+                                    continue
+                                
+                                for tx in transfers:
+                                    if not isinstance(tx, dict):
+                                        continue
+                                    
+                                    # Parse transfer data
+                                    from_addr = tx.get("from", "").lower()
+                                    to_addr = tx.get("to", "").lower()
+                                    value_raw = tx.get("value", "0")
+                                    decimals = int(tx.get("tokenDecimal", 18))
+                                    token_symbol = tx.get("tokenSymbol", "UNKNOWN")
+                                    tx_hash = tx.get("hash", "")
+                                    block_number = tx.get("blockNumber", "")
+                                    timestamp = int(tx.get("timeStamp", 0))
+                                    
+                                    # Calculate actual value
+                                    try:
+                                        amount = int(value_raw) / (10 ** decimals)
+                                    except (ValueError, TypeError):
+                                        continue
+                                    
+                                    # Skip small transactions (< $10k equivalent)
+                                    # Assuming stablecoins are ~$1
+                                    if amount < 10000:
+                                        continue
+                                    
+                                    # Classify flow type
+                                    from_entity = EXCHANGE_ADDRESSES.get(from_addr)
+                                    to_entity = EXCHANGE_ADDRESSES.get(to_addr)
+                                    
+                                    if from_entity and not to_entity:
+                                        flow_type = "exchange_outflow"
+                                    elif to_entity and not from_entity:
+                                        flow_type = "exchange_inflow"
+                                    else:
+                                        flow_type = "whale_transfer"
+                                    
+                                    event_time = datetime.fromtimestamp(
+                                        timestamp, tz=timezone.utc
+                                    ) if timestamp else now
+                                    
+                                    record = {
+                                        "token": token_symbol,
+                                        "chain": chain,
+                                        "flow_type": flow_type,
+                                        "amount": amount,
+                                        "amount_usd": amount,  # Stablecoins ~= USD
+                                        "from_address": from_addr[:100] if from_addr else None,
+                                        "to_address": to_addr[:100] if to_addr else None,
+                                        "from_entity": from_entity,
+                                        "to_entity": to_entity,
+                                        "tx_hash": tx_hash[:100] if tx_hash else None,
+                                        "block_number": int(block_number) if block_number else None,
+                                        "source_name": "etherscan",
+                                        "source_module": "RealIngestionModule.etherscan",
+                                        "event_time": event_time,
+                                        "fetched_at": now,
+                                        "raw_data": tx,
+                                    }
+                                    all_records.append(record)
+                            
+                            # Rate limit: 5 calls/sec
+                            await asyncio.sleep(0.25)
+                            
+                        except aiohttp.ClientError as e:
+                            self._logger.debug(f"[Etherscan] Request error: {e}")
+                            continue
+                
+                self._logger.info(
+                    f"[Etherscan] Fetched {len(all_records)} token transfers "
+                    f"from {len(self._config.etherscan_chains)} chain(s)"
+                )
+                
+                return all_records
+                
+        except asyncio.TimeoutError:
+            self._logger.warning(
+                f"[Etherscan] Request timeout after {self._config.timeout_seconds}s"
+            )
+            return []
+        except Exception as e:
+            self._logger.error(
+                f"[Etherscan] Unexpected error: {type(e).__name__}: {e}",
                 exc_info=True
             )
             return []
