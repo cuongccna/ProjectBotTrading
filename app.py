@@ -155,7 +155,7 @@ def wire_modules(orchestrator: Orchestrator, config: Dict[str, Any]) -> None:
             ExecutionStage.RUN_MARKET_CLASSIFICATION,
         ],
         config_key="data_processing",
-        critical=False,
+        critical=True,  # Critical: risk_scoring, risk_committee, strategy_engine depend on this
         timeout_seconds=180.0,
     )
     

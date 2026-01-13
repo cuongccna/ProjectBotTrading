@@ -211,7 +211,28 @@ class ModuleRegistry:
         """Register a module from a definition."""
         self._definitions[definition.name] = definition
         self._graph.add_node(definition.name, definition.dependencies)
+        
+        # Validate critical dependency chain
+        if definition.critical:
+            self._validate_critical_dependencies(definition)
+        
         self._logger.debug(f"Registered module: {definition.name}")
+    
+    def _validate_critical_dependencies(self, definition: ModuleDefinition) -> None:
+        """
+        Warn if a critical module depends on non-critical modules.
+        
+        A critical module depending on a non-critical module creates
+        a hidden failure mode: if the non-critical module fails,
+        startup continues, but the critical module can't start.
+        """
+        for dep_name in definition.dependencies:
+            dep_def = self._definitions.get(dep_name)
+            if dep_def and not dep_def.critical:
+                self._logger.warning(
+                    f"Critical module '{definition.name}' depends on non-critical "
+                    f"module '{dep_name}'. Consider making '{dep_name}' critical."
+                )
     
     def unregister(self, name: str) -> None:
         """Unregister a module."""
@@ -349,11 +370,19 @@ class ModuleRegistry:
         # Check dependencies are running
         for dep in module_info.definition.dependencies:
             dep_info = self._instances.get(dep)
-            if not dep_info or dep_info.status != ModuleStatus.RUNNING:
+            if not dep_info:
                 raise StartupError(
-                    message=f"Dependency not running: {dep}",
+                    message=f"Dependency not registered: {dep}",
                     module=name,
                     context={"dependency": dep},
+                )
+            if dep_info.status != ModuleStatus.RUNNING:
+                dep_status = dep_info.status.value if hasattr(dep_info.status, 'value') else str(dep_info.status)
+                dep_error = dep_info.error or "unknown"
+                raise StartupError(
+                    message=f"Dependency '{dep}' not running (status={dep_status}, error={dep_error})",
+                    module=name,
+                    context={"dependency": dep, "dep_status": dep_status, "dep_error": dep_error},
                 )
         
         module_info.status = ModuleStatus.STARTING
