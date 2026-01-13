@@ -88,7 +88,7 @@ class RealIngestionConfig:
     cryptopanic_kind: str = "news"  # news, media, all
     
     # Whale Alert settings (free tier: 10 req/min, $500k min value)
-    whalealert_enabled: bool = True
+    whalealert_enabled: bool = False  # Disabled by default (requires API key)
     whalealert_base_url: str = "https://api.whale-alert.io/v1"
     whalealert_api_key: Optional[str] = None
     whalealert_min_value_usd: int = 500000  # Minimum $500k for free tier
